@@ -28,7 +28,7 @@ from .mihomo_manager import MihomoProcess, MihomoUnavailable
 from .models import ProxyConfig, ProxyType
 from .network_catalog import NetworkCatalog, NetworkNotFound
 
-MAX_BATCH = 200
+MAX_BATCH = 500
 _single_checks = asyncio.Semaphore(3)
 
 
@@ -54,7 +54,9 @@ async def measure_exit(
 ) -> dict[str, Any]:
     checked_at = datetime.now(timezone.utc).isoformat()
     try:
-        ip, latency = await proxy_check.resolve_exit_ip(proxy, timeout=timeout, endpoints=endpoints)
+        ip, latency = await proxy_check.resolve_exit_ip(
+            proxy, timeout=timeout, endpoints=endpoints, fail_fast=True
+        )
     except (ConnectionError, asyncio.TimeoutError):
         return {
             "health": "error",

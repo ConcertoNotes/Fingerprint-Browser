@@ -11,15 +11,19 @@ import { NodeDetail } from '@/components/network/node-detail'
 import { WorldMap } from '@/components/network/world-map'
 import { useToast } from '@/components/toast'
 import { ApiRequestError, browsersAPI, hasGeography, isStaleWrite, profilesAPI, type Profile } from '@/lib/api'
-import { networkAPI, type BatchJob, type Binding, type CheckSite, type NetworkMap, type NetworkNode, type NetworkStatus } from '@/lib/network-api'
-import { countryName, flag, groupByLocation, groupTone, maskIp, type LocationGroup } from '@/lib/network-map'
+import { networkAPI, type BatchJob, type Binding, type CheckSite, type NetworkMap, type NetworkNode, type NetworkStatus, type Subscription } from '@/lib/network-api'
+import { countryName, flag, groupByLocation, groupTone, maskIp, purityTone, type LocationGroup } from '@/lib/network-map'
 
 const TONE_DOT = { ok: 'bg-ok', warn: 'bg-warn', danger: 'bg-danger', unknown: 'bg-ink-faint' } as const
+const TONE_TEXT = { ok: 'text-ok', warn: 'text-warn', danger: 'text-danger', unknown: 'text-ink-dim' } as const
+const SOURCE_KEY = 'cpm.map.source'
 
 export default function NetworkMapPage() {
   const { t, locale } = useI18n()
   const toast = useToast()
   const [map, setMap] = useState<NetworkMap | null>(null)
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [source, setSource] = useState<string>('all')
   const [nodes, setNodes] = useState<Record<string, NetworkNode>>({})
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [bindings, setBindings] = useState<Record<string, Binding>>({})
@@ -41,15 +45,17 @@ export default function NetworkMapPage() {
 
   const load = useCallback(async () => {
     try {
-      const [mapData, nodeData, profileData, bindingData, active, engine] = await Promise.all([
+      const [mapData, nodeData, profileData, bindingData, active, engine, subscriptionData] = await Promise.all([
         networkAPI.map(),
         networkAPI.nodes({ limit: 1000 }),
         allProfiles(),
         networkAPI.bindings(),
         browsersAPI.active(),
         networkAPI.status(),
+        networkAPI.subscriptions(),
       ])
       setMap(mapData)
+      setSubscriptions(subscriptionData)
       setNodes(Object.fromEntries(nodeData.nodes.map(node => [node.id, node])))
       setProfiles(profileData)
       setBindings(Object.fromEntries(bindingData.map(binding => [binding.profile_id, binding])))
@@ -69,22 +75,41 @@ export default function NetworkMapPage() {
     const params = new URLSearchParams(window.location.search)
     const preselected = params.get('profile')
     if (preselected) setSelectedProfileId(preselected)
+    const wanted = params.get('source') ?? readSource()
+    if (wanted) setSource(wanted)
     return () => { if (jobTimer.current) clearTimeout(jobTimer.current) }
   }, [load])
+
+  // A remembered airport that was deleted falls back to every airport.
+  const activeSource = source === 'all' || subscriptions.some(entry => entry.id === source) || !subscriptions.length ? source : 'all'
+
+  function chooseSource(value: string) {
+    setSource(value)
+    setSelectedKey(null)
+    try { window.localStorage.setItem(SOURCE_KEY, value) } catch { /* storage unavailable */ }
+  }
 
   const maskIps = status?.settings.mask_exit_ips ?? false
   const query = search.trim().toLowerCase()
   const features = useMemo(() => (map?.features.features ?? []).filter(feature => {
     const p = feature.properties
+    if (activeSource !== 'all' && p.subscription_id !== activeSource) return false
     if (health !== 'all' && p.health !== health) return false
     if (!query) return true
     return [p.label, p.city, p.region, p.country_iso, p.exit_ip, p.subscription_name, countryName(p.country_iso, locale)]
       .some(value => value && value.toLowerCase().includes(query))
-  }), [map, health, query, locale])
+  }), [map, health, query, locale, activeSource])
   const groups = useMemo(() => groupByLocation(features), [features])
   const selectedGroup = groups.find(group => group.key === selectedKey) ?? null
   const unknown = useMemo(() => (map?.unknown_location ?? []).filter(item =>
-    (health === 'all' || item.health === health) && (!query || item.label.toLowerCase().includes(query) || (item.exit_ip ?? '').includes(query))), [map, health, query])
+    (activeSource === 'all' || item.subscription_id === activeSource)
+    && (health === 'all' || item.health === health) && (!query || item.label.toLowerCase().includes(query) || (item.exit_ip ?? '').includes(query))), [map, health, query, activeSource])
+  const counts = useMemo(() => {
+    const inSource = (id: string) => activeSource === 'all' || id === activeSource
+    const placed = (map?.features.features ?? []).filter(feature => inSource(feature.properties.subscription_id)).length
+    const unplaced = (map?.unknown_location ?? []).filter(item => inSource(item.subscription_id)).length
+    return { placed, total: placed + unplaced }
+  }, [map, activeSource])
   const selectedProfile = profiles.find(profile => profile.id === selectedProfileId) ?? null
   const selectedBinding = selectedProfileId ? bindings[selectedProfileId] : undefined
 
@@ -189,24 +214,38 @@ export default function NetworkMapPage() {
   }
 
   async function startBatch(onlyUnchecked: boolean) {
-    const candidates = Object.values(nodes).filter(node => node.status === 'active' && (!onlyUnchecked || !node.check || node.check.stale))
-    const ids = candidates.slice(0, 200).map(node => node.id)
+    const candidates = Object.values(nodes).filter(node => node.status === 'active'
+      && (activeSource === 'all' || node.subscription_id === activeSource)
+      && (!onlyUnchecked || !node.check || node.check.stale))
+    const ids = candidates.slice(0, 500).map(node => node.id)
     if (!ids.length) { toast('info', t('Nothing to check'), t('Every active node has a recent measurement.')); return }
     try {
       const started = await networkAPI.checkBatch(ids)
       setJob(started)
       poll(started.id)
     } catch (err) {
-      toast('error', t('Could not start the batch check'), t(err instanceof Error ? err.message : String(err)))
+      if (err instanceof ApiRequestError && err.status === 409) {
+        const current = await networkAPI.currentJob().catch(() => null)
+        if (current) { setJob(current); poll(current.id) }
+        toast('info', t('A check is already running'), t('The map fills in as its results arrive.'))
+      } else {
+        toast('error', t('Could not start the batch check'), t(err instanceof Error ? err.message : String(err)))
+      }
     }
   }
 
-  function poll(id: string) {
+  function poll(id: string, tick = 0) {
+    if (jobTimer.current) clearTimeout(jobTimer.current)
     jobTimer.current = setTimeout(async () => {
       try {
         const current = await networkAPI.job(id)
         setJob(current)
-        if (current.state === 'queued' || current.state === 'running') { poll(id); return }
+        if (current.state === 'queued' || current.state === 'running') {
+          // Place exits as they are measured, not only at the end.
+          if (tick % 3 === 2) setMap(await networkAPI.map())
+          poll(id, tick + 1)
+          return
+        }
         await load()
         toast(current.state === 'finished' ? 'ok' : 'error', t('Batch check finished'),
           t('{ok} reachable, {failed} failed, one engine process.', { ok: current.ok, failed: current.failed }))
@@ -214,9 +253,54 @@ export default function NetworkMapPage() {
     }, 800)
   }
 
+  useEffect(() => {
+    // A check started elsewhere (the subscriptions page) keeps filling the map here.
+    networkAPI.currentJob().then(current => { if (current) { setJob(current); poll(current.id) } }).catch(() => {})
+    // Once, on arrival; poll keeps itself going through the timer ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function cancelJob() {
     if (!job) return
     try { setJob(await networkAPI.cancelJob(job.id)) } catch { /* already finished */ }
+  }
+
+  function openNode(group: LocationGroup, nodeId: string) {
+    setSelectedKey(group.key)
+    setExpanded(nodeId)
+    requestAnimationFrame(() => document.getElementById(`node-${nodeId}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+  }
+
+  function renderPopup(group: LocationGroup, close: () => void) {
+    const shown = group.nodes.slice(0, 6)
+    return <div className="py-2">
+      <div className="px-3 pb-1.5 pr-8">
+        <p className="truncate font-medium">{groupTitle(group, locale, t)}</p>
+        <p className="text-[11px] text-ink-dim">{t('{ok}/{count} up', { ok: group.health.ok, count: group.nodes.length })}</p>
+      </div>
+      <ul className="max-h-[260px] overflow-y-auto border-t border-line">
+        {shown.map(item => {
+          const intel = nodes[item.node_id]?.intel?.composite
+          const purity = intel?.purity_score ?? item.purity_score
+          return <li key={item.node_id}>
+            <button type="button" className="block w-full border-b border-line/60 px-3 py-1.5 text-left hover:bg-raised" onClick={() => { openNode(group, item.node_id); close() }}>
+              <span className="flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT[item.health === 'ok' ? 'ok' : item.health === 'error' ? 'danger' : 'unknown']}`} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate font-medium" title={item.label}>{item.label}</span>
+                <span className="shrink-0 font-mono text-[11px] text-ink-dim">{item.health === 'ok' && item.latency_ms != null ? `${item.latency_ms} ms` : item.health === 'error' ? t('Failed') : ''}</span>
+              </span>
+              <span className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-dim">
+                <span className="font-mono">{maskIp(item.exit_ip, maskIps)}</span>
+                <span className="min-w-0 flex-1 truncate">{[item.city, item.region].filter(Boolean).join(', ') || countryName(item.country_iso, locale)}</span>
+                {purity != null && <span className={`shrink-0 ${TONE_TEXT[purityTone(purity)]}`}>{t('Purity {score}', { score: Math.round(purity) })}</span>}
+              </span>
+              <span className="block truncate text-[11px] text-ink-faint">{item.subscription_name} · {item.protocol}</span>
+            </button>
+          </li>
+        })}
+      </ul>
+      {group.nodes.length > shown.length && <p className="px-3 pt-1.5 text-[11px] text-ink-dim">{t('{count} more in the side panel', { count: group.nodes.length - shown.length })}</p>}
+    </div>
   }
 
   const detailNodes = selectedGroup ? selectedGroup.nodes.map(item => nodes[item.node_id]).filter(Boolean) : []
@@ -226,7 +310,16 @@ export default function NetworkMapPage() {
   return <>
     <header className="sticky top-0 z-20 flex min-h-[52px] flex-wrap items-center gap-3 border-b border-line bg-canvas/85 px-5 py-2 backdrop-blur">
       <h1 className="text-[14px] font-semibold">{t('Network map')}</h1>
-      <span className="font-mono text-ink-faint">{map ? `${map.checked_count}/${map.total_nodes}` : ''}</span>
+      <select className="field h-[30px] w-auto max-w-[220px]" aria-label={t('Airport shown on the map')} value={activeSource} onChange={event => chooseSource(event.target.value)}>
+        <option value="all">{t('All airports and fixed nodes')}</option>
+        {subscriptions.filter(entry => !entry.manual).length > 0 && <optgroup label={t('Airports')}>
+          {subscriptions.filter(entry => !entry.manual).map(entry => <option key={entry.id} value={entry.id}>{entry.name} ({entry.node_counts.active})</option>)}
+        </optgroup>}
+        {subscriptions.some(entry => entry.manual) && <optgroup label={t('Fixed nodes')}>
+          {subscriptions.filter(entry => entry.manual).map(entry => <option key={entry.id} value={entry.id}>{entry.name} ({entry.node_counts.active})</option>)}
+        </optgroup>}
+      </select>
+      <span className="font-mono text-ink-faint" title={t('Located nodes / all nodes in this view')}>{map ? `${counts.placed}/${counts.total}` : ''}</span>
       <div className="relative ml-2 min-w-[160px] max-w-[280px] flex-1">
         <Search size={13} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-dim" />
         <input className="field h-[30px] pl-7" aria-label={t('Search nodes, countries, cities or IPs')} placeholder={t('Search nodes, countries, cities or IPs')} value={search} onChange={event => setSearch(event.target.value)} />
@@ -242,7 +335,7 @@ export default function NetworkMapPage() {
           <button className="btn btn-ghost" onClick={cancelJob}><X size={13} aria-hidden="true" />{t('Cancel')}</button>
         </> : <>
           <button className="btn btn-default" onClick={() => startBatch(true)} disabled={!status?.engine.available}><Activity size={13} aria-hidden="true" />{t('Check unmeasured')}</button>
-          <button className="btn btn-default" onClick={() => startBatch(false)} disabled={!status?.engine.available}>{t('Check all')}</button>
+          <button className="btn btn-default" onClick={() => startBatch(false)} disabled={!status?.engine.available}>{activeSource === 'all' ? t('Check all') : t('Check this airport')}</button>
         </>}
         <button className="btn btn-ghost h-[30px] w-[30px] p-0" onClick={load} aria-label={t('Reload')} title={t('Reload')}><RefreshCw size={13} aria-hidden="true" /></button>
       </div>
@@ -262,7 +355,7 @@ export default function NetworkMapPage() {
 
     {error ? <EmptyState icon={<Globe2 size={18} />} title={t('Cannot load the network map')} body={t(error)} action={<button className="btn btn-default" onClick={load}>{t('Retry')}</button>} />
       : loading ? <p className="px-5 py-8 text-ink-dim" role="status">{t('Loading…')}</p>
-      : !map?.total_nodes ? <EmptyState icon={<Globe2 size={18} />} title={t('No nodes yet')} body={t('Import a Clash/Mihomo subscription or configuration file first, then check its nodes to place their real exits on the map.')} action={<Link className="btn btn-primary" href="/subscriptions/">{t('Add a subscription')}</Link>} />
+      : !map?.total_nodes ? <EmptyState icon={<Globe2 size={18} />} title={t('No nodes yet')} body={t('Import an airport subscription, or add fixed proxies you bought, then check them to place their real exits on the map.')} action={<Link className="btn btn-primary" href="/subscriptions/">{t('Add a subscription')}</Link>} />
       : <div className="flex flex-col xl:h-[calc(100vh-53px)] xl:min-h-[520px] xl:flex-row">
         <aside className="order-2 max-h-[40vh] shrink-0 overflow-y-auto border-b border-line xl:order-none xl:max-h-none xl:w-[248px] xl:border-b-0 xl:border-r" aria-label={t('Profiles')}>
           <p className="sticky top-0 border-b border-line bg-canvas px-4 py-2 text-[11px] uppercase tracking-[0.05em] text-ink-faint">{t('Profiles')}</p>
@@ -298,7 +391,7 @@ export default function NetworkMapPage() {
         </aside>
 
         <section className="relative order-1 h-[56vh] min-h-[320px] flex-1 border-b border-line xl:order-none xl:h-auto xl:border-b-0" aria-label={t('Map')}>
-          <WorldMap groups={groups} selectedKey={selectedKey} onSelect={key => selectGroup(key)} focusToken={focusToken} />
+          <WorldMap groups={groups} selectedKey={selectedKey} onSelect={key => selectGroup(key)} focusToken={focusToken} fitKey={activeSource} renderPopup={renderPopup} />
           <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-3 rounded-md border border-line bg-canvas/85 px-3 py-1.5 text-[11px] text-ink-dim backdrop-blur" aria-hidden="true">
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-ok" />{t('Reachable')}</span>
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-warn" />{t('Mixed')}</span>
@@ -395,4 +488,8 @@ function groupTitle(group: LocationGroup, locale: string, t: (message: string, v
   const country = group.countries.map(iso => `${flag(iso)} ${countryName(iso, locale)}`).join(' / ')
   const city = group.cities.join(' / ')
   return [city, country].filter(Boolean).join(' · ') || t('Unnamed location')
+}
+
+function readSource(): string | null {
+  try { return window.localStorage.getItem(SOURCE_KEY) } catch { return null }
 }

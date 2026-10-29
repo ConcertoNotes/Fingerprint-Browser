@@ -66,7 +66,7 @@ async def test_import_list_and_responses_never_contain_secrets(api):
         ({"url": "https://127.0.0.1/x"}, "blocked_address"),
         ({"content": "port: 7890\n"}, "no_proxies"),
         ({"content": "proxy-providers: {a: {type: http}}\n"}, "providers_only"),
-        ({"content": "dm1lc3M6Ly9leUoySWpvaU1pSjk=\n"}, "base64_unsupported"),
+        ({"content": "dm1lc3M6Ly9leUoySWpvaU1pSjk=\n"}, "no_valid_proxies"),
     ],
 )
 async def test_unusable_sources_fail_with_their_code_and_store_nothing(api, body, code):
@@ -301,3 +301,66 @@ async def test_launching_a_bound_profile_without_an_engine_is_refused_cleanly(ap
     lease = await manager.storage.get_lease(profile.id)
     assert lease is None or lease[0] is None
     assert not manager.browser_sessions.is_live(profile.id)
+
+
+@pytest.mark.asyncio
+async def test_manual_nodes_from_a_form_or_pasted_lines(api):
+    created = await api.post(
+        "/api/v1/network/manual-nodes",
+        json={
+            "group_name": "Static seller",
+            "node": {
+                "name": "Seller 1",
+                "type": "socks5",
+                "server": "203.0.113.50",
+                "port": 1080,
+                "username": "buyer",
+                "password": SECRET,
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    data = created.json()["data"]
+    group_id = data["group"]["id"]
+    assert data["group"]["manual"] is True and data["created"][0]["protocol"] == "socks5"
+    assert SECRET not in created.text
+    pasted = await api.post(
+        "/api/v1/network/manual-nodes",
+        json={
+            "group_id": group_id,
+            "default_type": "http",
+            "text": f"198.51.100.7:3128:buyer:{SECRET}\nnot a proxy\n",
+        },
+    )
+    assert pasted.status_code == 201
+    assert pasted.json()["data"]["skipped"] == [{"line": 2, "reason": "unrecognised proxy line"}]
+    node_id = pasted.json()["data"]["created"][0]["id"]
+    renamed = await api.patch(f"/api/v1/network/nodes/{node_id}", json={"name": "Seller 2"})
+    assert renamed.status_code == 200 and renamed.json()["data"]["name"] == "Seller 2"
+    profile = await dependencies.get_profile_manager().create_profile(
+        "P", generate_fingerprint=False
+    )
+    await api.put(f"/api/v1/network/bindings/{profile.id}", json={"node_id": node_id})
+    refused = await api.delete(f"/api/v1/network/nodes/{node_id}")
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "node_bound"
+    listed = (await api.get("/api/v1/network/subscriptions")).json()["data"]["subscriptions"]
+    assert listed[0]["node_counts"]["active"] == 2
+    sync = await api.post(f"/api/v1/network/subscriptions/{group_id}/sync", json={})
+    assert sync.status_code == 422 and sync.json()["error"]["code"] == "manual_group"
+    assert (await api.get("/api/v1/network/jobs/current")).json()["data"] == {"job": None}
+
+
+@pytest.mark.asyncio
+async def test_manual_nodes_need_one_source_and_a_group(api):
+    for body in (
+        {"group_name": "x"},
+        {"text": "1.2.3.4:80"},
+        {"group_name": "x", "text": "1.2.3.4:80", "node": {"server": "a", "port": 1}},
+    ):
+        response = await api.post("/api/v1/network/manual-nodes", json=body)
+        assert response.status_code == 422
+    imported = await import_yaml(api)
+    node_id = (await nodes(api))["JP 01"]["id"]
+    edited = await api.patch(f"/api/v1/network/nodes/{node_id}", json={"name": "x"})
+    assert edited.status_code == 422 and edited.json()["error"]["code"] == "not_manual"
+    assert imported["subscription"]["manual"] is False

@@ -144,11 +144,62 @@ async def test_schema_five_databases_gain_the_network_tables_once(tmp_path):
         await storage.initialize()
         await storage.close()
     with closing(sqlite3.connect(path)) as db, db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 6
+        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 7
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert set(network_tables) <= tables
         assert db.execute(
             "SELECT version FROM manager_features WHERE feature='network-nodes'"
-        ).fetchone() == (1,)
+        ).fetchone() == (2,)
         assert db.execute("SELECT name FROM profiles").fetchall() == [("Existing",)]
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.asyncio
+async def test_schema_six_rebuild_keeps_subscriptions_and_allows_manual_groups(tmp_path):
+    path = tmp_path / "v6.sqlite"
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    await storage.close()
+    stamp = "2026-10-29T00:00:00+00:00"
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("DROP TABLE network_subscriptions")
+        db.execute(
+            "CREATE TABLE network_subscriptions (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+            "source_kind TEXT NOT NULL CHECK(source_kind IN ('url','file')), source_url_enc TEXT, "
+            "source_host TEXT, source_file_name TEXT, status TEXT NOT NULL DEFAULT 'idle', "
+            "last_synced_at TEXT, last_error_code TEXT, last_error TEXT, usage TEXT, "
+            "revision INTEGER NOT NULL DEFAULT 0, row_version BIGINT NOT NULL DEFAULT 0, "
+            "deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO network_subscriptions (id, name, source_kind, created_at, updated_at) "
+            "VALUES ('s1', 'Airport', 'file', ?, ?)",
+            (stamp, stamp),
+        )
+        db.execute(
+            "INSERT INTO network_nodes (id, subscription_id, node_key, display_name, protocol, "
+            "entry, config_enc, created_at, updated_at) VALUES ('n1','s1','k','JP','ss','a:1','enc:x',?,?)",
+            (stamp, stamp),
+        )
+        db.execute("UPDATE manager_features SET version=1 WHERE feature='network-nodes'")
+        db.execute("PRAGMA user_version=6")
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    await storage.close()
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("PRAGMA foreign_keys = ON")
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.execute("SELECT id, name FROM network_subscriptions").fetchall() == [
+            ("s1", "Airport")
+        ]
+        assert db.execute("SELECT subscription_id FROM network_nodes").fetchall() == [("s1",)]
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        db.execute(
+            "INSERT INTO network_subscriptions (id, name, source_kind, created_at, updated_at) "
+            "VALUES ('m1', 'Static', 'manual', ?, ?)",
+            (stamp, stamp),
+        )
+        # Cascades still work after the rebuild.
+        db.execute("DELETE FROM network_subscriptions WHERE id='s1'")
+        assert db.execute("SELECT COUNT(*) FROM network_nodes").fetchone()[0] == 0

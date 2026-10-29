@@ -9,7 +9,7 @@ from .network_catalog import now, seal, unseal
 
 DEFAULTS: dict[str, Any] = {
     "mihomo_path": None,
-    "probe_concurrency": 8,
+    "probe_concurrency": 16,
     "probe_timeout_seconds": 10,
     "intel_cache_hours": 24,
     "intel_ipinfo_enabled": True,

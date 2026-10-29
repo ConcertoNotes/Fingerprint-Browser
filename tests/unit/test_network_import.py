@@ -95,10 +95,8 @@ proxies:
         (b"proxies: []\nproxy-providers: {p: {type: http, url: 'https://x'}}\n", "providers_only"),
         (b"proxies: {a: 1}\n", "invalid_yaml"),
         (b"proxies:\n  - {name: x, type: direct, server: a, port: 1}\n", "no_valid_proxies"),
-        (
-            b"ss://YWVzLTEyOC1nY206cGFzcw@1.2.3.4:443#a\nvmess://eyJ2IjoiMiJ9\n",
-            "uri_list_unsupported",
-        ),
+        # Share links in an unknown scheme: refused by name, never "0 nodes imported".
+        (b"unknown://a\nother://b\n", "no_valid_proxies"),
     ],
 )
 def test_unusable_documents_are_rejected_with_a_code(content, code):
@@ -107,13 +105,18 @@ def test_unusable_documents_are_rejected_with_a_code(content, code):
     assert error.value.code == code
 
 
-def test_base64_share_link_lists_are_named_not_imported_as_zero_nodes():
+def test_base64_share_link_lists_are_imported_like_clash_documents():
     import base64
 
-    encoded = base64.b64encode(b"ss://YWVzOnBhc3M@1.2.3.4:443#node\ntrojan://pw@h:443#t\n")
-    with pytest.raises(SubscriptionError) as error:
-        parse_subscription(encoded)
-    assert error.value.code == "base64_unsupported"
+    encoded = base64.b64encode(
+        b"ss://YWVzLTI1Ni1nY206cGFzcw@1.2.3.4:443#node\ntrojan://pw@h.example:443#t\n"
+    )
+    parsed = parse_subscription(encoded)
+    assert [(node.protocol, node.name) for node in parsed.nodes] == [
+        ("ss", "node"),
+        ("trojan", "t"),
+    ]
+    assert parsed.nodes[0].config["cipher"] == "aes-256-gcm"
 
 
 def test_custom_tags_cannot_construct_objects():

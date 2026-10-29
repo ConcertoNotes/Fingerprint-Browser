@@ -353,6 +353,7 @@ async def resolve_exit_ip(
     proxy: ProxyConfig | None,
     timeout: float = DEFAULT_TIMEOUT,
     endpoints: tuple[str, ...] | None = None,
+    fail_fast: bool = False,
 ) -> tuple[str, int]:
     """Ask, through the proxy, what address the internet sees. Returns (ip, ms).
 
@@ -405,6 +406,10 @@ async def resolve_exit_ip(
                 last_error = exc
                 # Transport errors may contain a credential-bearing proxy URL.
                 logger.debug(f"Proxy check via {endpoint} failed: {type(exc).__name__}")
+                if fail_fast and isinstance(exc, httpx.ProxyError):
+                    # The proxy itself refused the tunnel (a dead node behind a
+                    # local engine): another endpoint cannot change the answer.
+                    break
                 continue
             if not valid_ipv4(answer) and not valid_ipv6(answer):
                 last_error = ValueError(f"{endpoint} answered with something else")

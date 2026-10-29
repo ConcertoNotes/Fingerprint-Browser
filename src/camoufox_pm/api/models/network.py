@@ -33,13 +33,48 @@ class SubscriptionSyncRequest(_Strict):
     content: str | None = Field(None, max_length=10 * 1024 * 1024)
 
 
+class ManualNode(_Strict):
+    name: str | None = Field(None, max_length=128)
+    type: Literal["http", "https", "socks5"] = "http"
+    server: str = Field(..., min_length=1, max_length=253)
+    port: int = Field(..., ge=1, le=65535)
+    username: str | None = Field(None, max_length=255)
+    password: str | None = Field(None, max_length=255)
+
+
+class ManualNodesRequest(_Strict):
+    """Add fixed nodes to a manual group: one form entry, or pasted lines/links/YAML."""
+
+    group_id: str | None = Field(None, max_length=64)
+    group_name: str | None = Field(None, max_length=80)
+    node: ManualNode | None = None
+    text: str | None = Field(None, max_length=1024 * 1024)
+    default_type: Literal["http", "https", "socks5"] = "http"
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "ManualNodesRequest":
+        if (self.node is None) == (self.text is None):
+            raise ValueError("Provide either node or text")
+        if self.group_id is None and not (self.group_name or "").strip():
+            raise ValueError("Choose a group or name a new one")
+        return self
+
+
+class NodeUpdateRequest(_Strict):
+    name: str | None = Field(None, min_length=1, max_length=128)
+    server: str | None = Field(None, min_length=1, max_length=253)
+    port: int | None = Field(None, ge=1, le=65535)
+    username: str | None = Field(None, max_length=255)
+    password: str | None = Field(None, max_length=255)
+
+
 class NodeCheckRequest(_Strict):
     include_intel: bool = True
     refresh_intel: bool = False
 
 
 class BatchCheckRequest(_Strict):
-    node_ids: list[str] = Field(..., min_length=1, max_length=200)
+    node_ids: list[str] = Field(..., min_length=1, max_length=500)
 
 
 class BindingRequest(_Strict):

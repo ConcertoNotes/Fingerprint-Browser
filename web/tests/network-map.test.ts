@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { MapFeature, MapFeatureProperties } from '../src/lib/network-api'
-import { flag, groupByLocation, groupTone, lookupUrl, maskIp, purityTone, usageSummary } from '../src/lib/network-map'
+import { flag, groupByLocation, groupTone, lookupUrl, maskIp, prepareCountries, purityTone, unwrapRing, usageSummary } from '../src/lib/network-map'
 
 function feature(id: string, lon: number, lat: number, extra: Partial<MapFeatureProperties> = {}): MapFeature {
   return {
@@ -10,7 +10,7 @@ function feature(id: string, lon: number, lat: number, extra: Partial<MapFeature
     id,
     geometry: { type: 'Point', coordinates: [lon, lat] },
     properties: {
-      node_id: id, label: id, subscription_name: 's', protocol: 'ss', status: 'active',
+      node_id: id, label: id, subscription_id: 's', subscription_name: 's', protocol: 'ss', status: 'active',
       country_iso: 'JP', city: null, region: null, precision: 'coordinates', location_source: 'geoip',
       timezone: 'Asia/Tokyo', health: 'ok', latency_ms: 100, exit_ip: '203.0.113.1',
       checked_at: '2026-10-29T00:00:00Z', stale: false, profile_count: 0, shared_exit_count: 1,
@@ -65,4 +65,17 @@ test('usage summary', () => {
 test('external lookups accept only addresses', () => {
   assert.equal(lookupUrl('scamalytics', '203.0.113.9'), 'https://scamalytics.com/ip/203.0.113.9')
   assert.equal(lookupUrl('ipinfo', '203.0.113.9/../x'), null)
+})
+
+test('rings crossing the antimeridian are unwrapped instead of spanning the world', () => {
+  const ring: [number, number][] = [[178, 65], [-179, 66], [-175, 67], [179, 68], [178, 65]]
+  const unwrapped = unwrapRing(ring)
+  for (let i = 1; i < unwrapped.length; i++) assert.ok(Math.abs(unwrapped[i][0] - unwrapped[i - 1][0]) <= 180)
+  assert.deepEqual(unwrapped[1], [181, 66])
+  const prepared = prepareCountries({ features: [
+    { type: 'Feature', id: '010', properties: { name: 'Antarctica' }, geometry: { type: 'Polygon', coordinates: [ring] } },
+    { type: 'Feature', id: '643', properties: { name: 'Russia' }, geometry: { type: 'MultiPolygon', coordinates: [[ring]] } },
+  ] })
+  assert.equal(prepared.features.length, 1)
+  assert.deepEqual(prepared.features[0].geometry?.coordinates, [[unwrapped]])
 })

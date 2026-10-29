@@ -99,6 +99,9 @@ class ParsedNode:
     config: dict[str, Any]
     key: str = ""
     insecure: bool = False
+    # Panels list traffic, expiry or their website as fake "nodes". They stay in
+    # the subscription for reference but are never checked, mapped or bound.
+    informational: bool = False
 
     @property
     def entry(self) -> str:
@@ -524,19 +527,13 @@ def parse_subscription(content: bytes | str) -> ParsedSubscription:
         text = content
     if not text.strip():
         raise SubscriptionError("empty", "The subscription is empty.")
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    if lines and all(_URI_LINE.match(line) for line in lines[:20]):
-        raise SubscriptionError(
-            "uri_list_unsupported",
-            "This is a list of share links (ss://, vmess://…). Import a Clash/Mihomo YAML "
-            "subscription instead; most panels offer it as the Clash or Mihomo format.",
-        )
-    if _looks_like_base64_list(text):
-        raise SubscriptionError(
-            "base64_unsupported",
-            "This subscription is Base64-encoded share links. Choose the Clash/Mihomo format "
-            "in your provider's panel, or convert it to Clash YAML first.",
-        )
+    from .network_uri import decode_link_list
+
+    links = decode_link_list(text)
+    if links is not None:
+        # Share-link lists and Base64 subscriptions become the same mappings a
+        # Clash document would hold, then go through the same validation.
+        return _collect(_links_to_mappings(links))
     try:
         loader = _BoundedLoader(text)
         try:
@@ -569,21 +566,57 @@ def parse_subscription(content: bytes | str) -> ParsedSubscription:
             "too_many_nodes", f"A subscription can contain at most {MAX_NODES} nodes."
         )
 
+    return _collect([(index, raw, None) for index, raw in enumerate(proxies, start=1)])
+
+
+def _links_to_mappings(lines: list[str]) -> list[tuple[int, Any, str | None]]:
+    from .network_uri import LinkError, parse_link
+
+    if len(lines) > MAX_NODES:
+        raise SubscriptionError(
+            "too_many_nodes", f"A subscription can contain at most {MAX_NODES} nodes."
+        )
+    mappings: list[tuple[int, Any, str | None]] = []
+    for index, line in enumerate(lines, start=1):
+        try:
+            mappings.append((index, parse_link(line), None))
+        except LinkError as exc:
+            mappings.append((index, None, str(exc)))
+    return mappings
+
+
+# Names panels use for pseudo-nodes that carry account information.
+_INFORMATIONAL = re.compile(
+    r"剩余流量|剩餘流量|到期|過期|过期|更新時間|更新时间|官网|官網|网址|網址|下次重置|套餐|"
+    r"\bexpire|\btraffic\b|\breset\b|website",
+    re.I,
+)
+
+
+def is_informational(name: str) -> bool:
+    return bool(_INFORMATIONAL.search(name))
+
+
+def _collect(entries: list[tuple[int, Any, str | None]]) -> ParsedSubscription:
     nodes: list[ParsedNode] = []
     warnings: list[dict[str, Any]] = []
     seen: dict[str, int] = {}
-    for index, raw in enumerate(proxies, start=1):
+    for index, raw, failure in entries:
+        if failure is not None:
+            warnings.append({"index": index, "reason": failure})
+            continue
         try:
             node = validate_node(raw)
         except ValueError as exc:
             # The reason never contains a value from the entry.
             warnings.append({"index": index, "reason": str(exc)})
             continue
+        node.informational = is_informational(node.name)
         key = node_key(node)
         seen[key] = seen.get(key, 0) + 1
         node.key = key if seen[key] == 1 else f"{key}#{seen[key]}"
         nodes.append(node)
-    if not nodes:
+    if not any(not node.informational for node in nodes):
         raise SubscriptionError(
             "no_valid_proxies", "None of the proxies in this subscription can be used."
         )

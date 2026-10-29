@@ -137,3 +137,45 @@ export function distanceKm(lat1: number, lon1: number, lat2: number, lon2: numbe
   const a = Math.sin(((lat2 - lat1) * rad) / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(((lon2 - lon1) * rad) / 2) ** 2
   return 2 * Math.asin(Math.sqrt(a)) * 6371
 }
+
+type Ring = [number, number][]
+
+/**
+ * Country shapes made for spherical rendering cross the ±180° meridian (Russia,
+ * Fiji); drawn flat, such a ring jumps across the whole world and paints
+ * horizontal bands. Unwrap each ring so neighbouring points never jump more than
+ * 180°, and drop Antarctica, whose ring encircles the pole and cannot be drawn
+ * flat at all.
+ */
+export function unwrapRing(ring: Ring): Ring {
+  const out: Ring = []
+  let shift = 0
+  ring.forEach(([lon, lat], index) => {
+    if (index > 0) {
+      const previous = ring[index - 1][0]
+      if (lon - previous > 180) shift -= 360
+      else if (previous - lon > 180) shift += 360
+    }
+    out.push([lon + shift, lat])
+  })
+  return out
+}
+
+interface CountryFeature {
+  type: 'Feature'
+  id?: string | number
+  properties: { name?: string } | null
+  geometry: { type: 'Polygon'; coordinates: Ring[] } | { type: 'MultiPolygon'; coordinates: Ring[][] } | null
+}
+
+export function prepareCountries<T extends { features: CountryFeature[] }>(collection: T): T {
+  const features = collection.features
+    .filter(feature => feature.properties?.name !== 'Antarctica' && String(feature.id) !== '010' && feature.geometry)
+    .map(feature => {
+      const geometry = feature.geometry!
+      return geometry.type === 'Polygon'
+        ? { ...feature, geometry: { ...geometry, coordinates: geometry.coordinates.map(unwrapRing) } }
+        : { ...feature, geometry: { ...geometry, coordinates: geometry.coordinates.map(polygon => polygon.map(unwrapRing)) } }
+    })
+  return { ...collection, features }
+}

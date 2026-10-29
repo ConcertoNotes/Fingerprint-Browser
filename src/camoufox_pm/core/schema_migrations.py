@@ -7,7 +7,7 @@ New versions must add an explicit numbered migration before increasing CURRENT.
 
 import sqlite3
 
-CURRENT_SCHEMA = 6
+CURRENT_SCHEMA = 7
 
 # Subscription nodes, their measured exits and per-profile bindings. Secrets
 # (subscription URLs, node configurations, provider keys) are stored sealed.
@@ -17,7 +17,7 @@ NETWORK_TABLES = (
     """CREATE TABLE IF NOT EXISTS network_subscriptions (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        source_kind TEXT NOT NULL CHECK(source_kind IN ('url','file')),
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('url','file','manual')),
         source_url_enc TEXT,
         source_host TEXT,
         source_file_name TEXT,
@@ -189,3 +189,56 @@ def complete_migration(connection: sqlite3.Connection) -> None:
                 "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 1)"
             )
             connection.execute("PRAGMA user_version = 6")
+
+    if current < 7:
+        # Manual node groups (fixed proxies a user bought) are subscriptions of
+        # kind 'manual'. Databases created by migration 6 before this existed
+        # carry the narrower CHECK, which SQLite can only change by rebuilding
+        # the table (https://www.sqlite.org/lang_altertable.html#otheralter).
+        _allow_manual_subscriptions(connection)
+
+
+def _allow_manual_subscriptions(connection: sqlite3.Connection) -> None:
+    sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='network_subscriptions'"
+    ).fetchone()[0]
+    if "'manual'" in sql:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
+            )
+            connection.execute("PRAGMA user_version = 7")
+        return
+    # Foreign keys cannot be switched inside a transaction; nodes reference this
+    # table, and the rebuild keeps every row and ID, so their links stay valid.
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            columns = [
+                row[1] for row in connection.execute("PRAGMA table_info(network_subscriptions)")
+            ]
+            create = (
+                NETWORK_TABLES[0]
+                .replace("network_subscriptions (", "network_subscriptions_rebuild (", 1)
+                .replace("IF NOT EXISTS ", "", 1)
+            )
+            connection.execute(create)
+            names = ", ".join(columns)
+            connection.execute(
+                f"INSERT INTO network_subscriptions_rebuild ({names}) "
+                f"SELECT {names} FROM network_subscriptions"
+            )
+            connection.execute("DROP TABLE network_subscriptions")
+            connection.execute(
+                "ALTER TABLE network_subscriptions_rebuild RENAME TO network_subscriptions"
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("Network subscription migration broke a reference")
+            connection.execute(
+                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
+            )
+            connection.execute("PRAGMA user_version = 7")
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")

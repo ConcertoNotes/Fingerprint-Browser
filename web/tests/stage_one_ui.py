@@ -71,6 +71,7 @@ class DesktopUI(unittest.TestCase):
         # engine-less by default, as on a fresh install.
         self.network_bindings = []
         self.network_nodes = []
+        self.network_subscriptions = []
         self.network_map = {"features": {"type": "FeatureCollection", "features": []}, "unknown_location": [], "unknown_location_count": 0, "checked_count": 0, "total_nodes": 0}
         self.network_status = {"engine": {"available": False, "code": "binary_missing", "message": "Mihomo is not installed. Set its path in Settings → Network, or run scripts/prepare_mihomo.py."}, "geoip": {"available": True, "name": "geoip-combined.mmdb", "size": 1, "modified_at": 1790000000}, "encryption_available": True, "active_runtimes": 0, "settings": {"mihomo_path": None, "probe_concurrency": 8, "probe_timeout_seconds": 10, "intel_cache_hours": 24, "intel_ipinfo_enabled": True, "intel_ippure_enabled": True, "intel_scamalytics_enabled": False, "mask_exit_ips": False, "has_intel_ipinfo_token": False, "has_intel_scamalytics_url": False, "has_intel_scamalytics_key": False}}
         self.config = {"version": "0.5.0", "host": "127.0.0.1", "port": 8000, "database_path": "/local/profiles.db", "api_key_set": False, "user_auth_enabled": False, "encryption_enabled": True, "cors_origins": [], "camoufox_available": True, "uptime_seconds": 60, "host_os": "windows"}
@@ -199,6 +200,10 @@ class DesktopUI(unittest.TestCase):
             data, envelope = self.network_map, True
         elif path.startswith("/network/nodes?"):
             data, envelope = {"nodes": self.network_nodes, "total": len(self.network_nodes)}, True
+        elif path == "/network/subscriptions":
+            data, envelope = {"subscriptions": self.network_subscriptions}, True
+        elif path == "/network/jobs/current":
+            data, envelope = {"job": None}, True
         elif path == "/trash/profiles":
             data, envelope = {"profiles": self.trash}, True
         elif path.endswith("?confirm=true"):
@@ -699,7 +704,7 @@ class DesktopUI(unittest.TestCase):
         self.network_map = {
             "features": {"type": "FeatureCollection", "features": [
                 {"type": "Feature", "id": node["id"], "geometry": {"type": "Point", "coordinates": [139.69, 35.69]},
-                 "properties": {"node_id": node["id"], "label": node["name"], "subscription_name": "Airport", "protocol": "trojan", "status": "active",
+                 "properties": {"node_id": node["id"], "label": node["name"], "subscription_id": "sub", "subscription_name": "Airport", "protocol": "trojan", "status": "active",
                                 "country_iso": "JP", "city": None, "region": None, "precision": "coordinates", "location_source": "geoip",
                                 "timezone": "Asia/Tokyo", "health": "ok", "latency_ms": node["check"]["latency_ms"], "exit_ip": "203.0.113.21",
                                 "checked_at": "2026-10-29T00:00:00Z", "stale": False, "profile_count": 0, "shared_exit_count": 2,

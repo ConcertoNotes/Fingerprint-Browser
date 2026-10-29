@@ -108,7 +108,9 @@ export interface SubscriptionUsage {
 export interface Subscription {
   id: string
   name: string
-  source_kind: 'url' | 'file'
+  source_kind: 'url' | 'file' | 'manual'
+  /** A group of fixed nodes added by hand; it has no source to refresh. */
+  manual: boolean
   source_display: string | null
   source_file_name: string | null
   status: 'idle' | 'syncing' | 'ok' | 'error'
@@ -136,6 +138,7 @@ export interface SyncReport {
 export interface MapFeatureProperties {
   node_id: string
   label: string
+  subscription_id: string
   subscription_name: string
   protocol: string
   status: NodeStatus
@@ -166,7 +169,7 @@ export interface MapFeature {
 
 export interface NetworkMap {
   features: { type: 'FeatureCollection'; features: MapFeature[] }
-  unknown_location: { node_id: string; label: string; status: NodeStatus; health: Health; country_iso: string | null; exit_ip: string | null }[]
+  unknown_location: { node_id: string; subscription_id: string; label: string; status: NodeStatus; health: Health; country_iso: string | null; exit_ip: string | null }[]
   unknown_location_count: number
   checked_count: number
   total_nodes: number
@@ -232,6 +235,23 @@ export interface NetworkStatus {
 
 export type CheckSite = 'ippure' | 'ipip' | 'ipinfo' | 'scamalytics'
 
+export type SimpleProxyType = 'http' | 'https' | 'socks5'
+
+export interface ManualNodeInput {
+  name?: string
+  type: SimpleProxyType
+  server: string
+  port: number
+  username?: string
+  password?: string
+}
+
+export interface ManualNodesResult {
+  group: Subscription
+  created: NetworkNode[]
+  skipped: { line: number; reason: string }[]
+}
+
 interface Envelope<T> { data: T }
 
 async function data<T>(path: string, init?: RequestInit): Promise<T> {
@@ -271,6 +291,13 @@ export const networkAPI = {
     data<NetworkNode>(`/nodes/${id}/check`, json('POST', options)),
   checkBatch: (nodeIds: string[]) => data<BatchJob>('/nodes/check-batch', json('POST', { node_ids: nodeIds })),
   job: (id: string) => data<BatchJob>(`/jobs/${id}`),
+  currentJob: async () => (await data<{ job: BatchJob | null }>('/jobs/current')).job,
+  addManualNode: (target: { group_id?: string; group_name?: string }, node: ManualNodeInput) =>
+    data<ManualNodesResult>('/manual-nodes', json('POST', { ...target, node })),
+  addManualText: (target: { group_id?: string; group_name?: string }, text: string, defaultType: SimpleProxyType) =>
+    data<ManualNodesResult>('/manual-nodes', json('POST', { ...target, text, default_type: defaultType })),
+  updateNode: (id: string, changes: Partial<ManualNodeInput>) => data<NetworkNode>(`/nodes/${id}`, json('PATCH', changes)),
+  deleteNode: (id: string) => data<{ id: string }>(`/nodes/${id}`, json('DELETE')),
   cancelJob: (id: string) => data<BatchJob>(`/jobs/${id}/cancel`, json('POST')),
 
   map: () => data<NetworkMap>('/map'),

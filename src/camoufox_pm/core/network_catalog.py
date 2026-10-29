@@ -30,6 +30,8 @@ from .network_subscription import (
 )
 
 STALE_AFTER = timedelta(hours=24)
+# invalid_reason for panel entries that only carry account information.
+INFORMATIONAL = "informational entry"
 _ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 
 
@@ -39,6 +41,12 @@ class NetworkSecretsUnavailable(RuntimeError):
 
 class NetworkNotFound(LookupError):
     pass
+
+
+class NodeInUse(RuntimeError):
+    def __init__(self, count: int):
+        self.count = count
+        super().__init__(f"{count} profile(s) are bound to this node")
 
 
 class SubscriptionHasBindings(RuntimeError):
@@ -181,6 +189,7 @@ class NetworkCatalog:
             "source_display": (
                 f"https://{row['source_host']}/…" if row["source_host"] else row["source_file_name"]
             ),
+            "manual": row["source_kind"] == "manual",
             "source_file_name": row["source_file_name"],
             "status": row["status"],
             "last_synced_at": row["last_synced_at"],
@@ -264,6 +273,10 @@ class NetworkCatalog:
         self, subscription_id: str, *, content: bytes | None = None, fetch=fetch_subscription
     ) -> dict[str, Any]:
         row = self._subscription_row(subscription_id)
+        if row["source_kind"] == "manual":
+            raise SubscriptionError(
+                "manual_group", "Manual node groups have no source to refresh; edit their nodes."
+            )
         try:
             if row["source_kind"] == "url":
                 if content is not None:
@@ -299,7 +312,7 @@ class NetworkCatalog:
         existing = {
             row["node_key"]: row
             for row in self.connection.execute(
-                "SELECT id, node_key, display_name, config_enc, status, position, entry, protocol "
+                "SELECT id, node_key, display_name, config_enc, status, invalid_reason, position, entry, protocol "
                 "FROM network_nodes WHERE subscription_id = ?",
                 (subscription_id,),
             )
@@ -309,12 +322,13 @@ class NetworkCatalog:
         for position, node in enumerate(parsed.nodes):
             seen.add(node.key)
             config_json = json.dumps(node.config, sort_keys=True, ensure_ascii=False)
+            status, reason = ("invalid", INFORMATIONAL) if node.informational else ("active", None)
             current = existing.get(node.key)
             if current is None:
                 self.connection.execute(
                     "INSERT INTO network_nodes (id, subscription_id, node_key, display_name, "
-                    "protocol, entry, config_enc, status, position, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,'active',?,?,?)",
+                    "protocol, entry, config_enc, status, invalid_reason, position, created_at, "
+                    "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         new_id("n"),
                         subscription_id,
@@ -323,6 +337,8 @@ class NetworkCatalog:
                         node.protocol,
                         node.entry,
                         seal(config_json),
+                        status,
+                        reason,
                         position,
                         stamp,
                         stamp,
@@ -331,16 +347,18 @@ class NetworkCatalog:
                 created += 1
                 continue
             same_config = unseal(current["config_enc"]) == config_json
-            if same_config and current["status"] == "active" and current["position"] == position:
+            if same_config and current["status"] == status and current["position"] == position:
                 unchanged += 1
                 continue
             self.connection.execute(
-                "UPDATE network_nodes SET display_name=?, entry=?, config_enc=?, status='active', "
-                "invalid_reason=NULL, retired_at=NULL, position=?, updated_at=? WHERE id=?",
+                "UPDATE network_nodes SET display_name=?, entry=?, config_enc=?, status=?, "
+                "invalid_reason=?, retired_at=NULL, position=?, updated_at=? WHERE id=?",
                 (
                     node.name,
                     node.entry,
                     current["config_enc"] if same_config else seal(config_json),
+                    status,
+                    reason,
                     position,
                     stamp,
                     current["id"],
@@ -351,13 +369,17 @@ class NetworkCatalog:
                 self.connection.execute(
                     "DELETE FROM network_node_checks WHERE node_id = ?", (current["id"],)
                 )
-            if same_config and current["status"] == "active":
+            if same_config and current["status"] == status:
                 unchanged += 1
             else:
                 updated += 1
         retired = 0
         for key, row in existing.items():
-            if key not in seen and row["status"] != "retired":
+            if key not in seen and self._stale_informational(row):
+                # Panels rewrite lines such as "更新時間：…" on every update; an old one
+                # is dropped instead of piling up as retired.
+                self.connection.execute("DELETE FROM network_nodes WHERE id = ?", (row["id"],))
+            elif key not in seen and row["status"] != "retired":
                 self.connection.execute(
                     "UPDATE network_nodes SET status='retired', retired_at=?, updated_at=? "
                     "WHERE id=?",
@@ -383,6 +405,194 @@ class NetworkCatalog:
             "warnings": parsed.warnings,
             "last_synced_at": stamp,
         }
+
+    # --- Manual node groups ---------------------------------------------------
+    #
+    # Fixed proxies a user bought (host, port, username, password) or single share
+    # links live in groups of kind 'manual'. They have no source to refresh;
+    # their nodes are added, edited and deleted one by one.
+
+    def _stale_informational(self, row: Any) -> bool:
+        """An unlisted panel line, including ones stored before they were recognised."""
+        from .network_subscription import is_informational
+
+        if row["invalid_reason"] == INFORMATIONAL:
+            return True
+        if not is_informational(row["display_name"]):
+            return False
+        bound = self.connection.execute(
+            "SELECT 1 FROM profile_network_bindings WHERE node_id = ?", (row["id"],)
+        ).fetchone()
+        return bound is None
+
+    def create_manual_group(self, name: str) -> dict[str, Any]:
+        name = " ".join((name or "").split())[:80] or "Manual nodes"
+        seal("")  # refuse early, before anything is stored, when no key exists
+        group_id = new_id("s")
+        stamp = now()
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO network_subscriptions (id, name, source_kind, status, last_synced_at, "
+                "created_at, updated_at) VALUES (?,?,'manual','ok',?,?,?)",
+                (group_id, name, stamp, stamp, stamp),
+            )
+        return self.get_subscription(group_id)
+
+    def _manual_group(self, group_id: str):
+        row = self._subscription_row(group_id)
+        if row["source_kind"] != "manual":
+            raise SubscriptionError("not_manual", "Nodes can only be added to manual node groups.")
+        return row
+
+    def add_manual_nodes(
+        self, group_id: str, candidates: list[tuple[int, Any, str | None]]
+    ) -> dict[str, Any]:
+        """Insert validated nodes; existing identical nodes and bad lines are skipped."""
+        from .network_subscription import node_key, validate_node
+
+        self._manual_group(group_id)
+        created: list[str] = []
+        skipped: list[dict[str, Any]] = []
+        stamp = now()
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            position = self.connection.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM network_nodes WHERE subscription_id = ?",
+                (group_id,),
+            ).fetchone()[0]
+            for line, raw, failure in candidates:
+                if failure is not None:
+                    skipped.append({"line": line, "reason": failure})
+                    continue
+                try:
+                    node = validate_node(raw)
+                except ValueError as exc:
+                    skipped.append({"line": line, "reason": str(exc)})
+                    continue
+                key = node_key(node)
+                exists = self.connection.execute(
+                    "SELECT 1 FROM network_nodes WHERE subscription_id = ? AND node_key = ?",
+                    (group_id, key),
+                ).fetchone()
+                if exists:
+                    skipped.append({"line": line, "reason": "already exists"})
+                    continue
+                node_id = new_id("n")
+                self.connection.execute(
+                    "INSERT INTO network_nodes (id, subscription_id, node_key, display_name, "
+                    "protocol, entry, config_enc, status, position, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,'active',?,?,?)",
+                    (
+                        node_id,
+                        group_id,
+                        key,
+                        node.name,
+                        node.protocol,
+                        node.entry,
+                        seal(json.dumps(node.config, sort_keys=True, ensure_ascii=False)),
+                        position,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                position += 1
+                created.append(node_id)
+            self.connection.execute(
+                "UPDATE network_subscriptions SET revision = revision + 1, updated_at = ?, "
+                "last_synced_at = ? WHERE id = ?",
+                (stamp, stamp, group_id),
+            )
+        return {
+            "group": self.get_subscription(group_id),
+            "created": [self.get_node(node_id) for node_id in created],
+            "skipped": skipped,
+        }
+
+    def update_manual_node(self, node_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        """Rename any manual node; change the connection of HTTP/SOCKS5 ones.
+
+        An omitted password keeps the stored one and an empty one clears it, the
+        same write-only convention as the proxy library.
+        """
+        from .network_subscription import node_key, validate_node
+
+        row = self.connection.execute(
+            "SELECT n.id, n.subscription_id, n.protocol, n.config_enc, n.display_name, s.source_kind "
+            "FROM network_nodes n JOIN network_subscriptions s ON s.id = n.subscription_id "
+            "WHERE n.id = ?",
+            (node_id,),
+        ).fetchone()
+        if row is None:
+            raise NetworkNotFound("Node not found")
+        if row["source_kind"] != "manual":
+            raise SubscriptionError("not_manual", "Only manually added nodes can be edited.")
+        config = json.loads(unseal(row["config_enc"]))
+        connection_fields = {"server", "port", "username", "password"}
+        if connection_fields & set(changes) and row["protocol"] not in {"http", "socks5"}:
+            raise SubscriptionError(
+                "not_editable", "Only HTTP and SOCKS5 nodes can change their connection."
+            )
+        for field in connection_fields & set(changes):
+            value = changes[field]
+            if field in {"username", "password"} and value in (None, ""):
+                config.pop(field, None)
+            else:
+                config[field] = value
+        name = changes.get("name") or row["display_name"]
+        try:
+            node = validate_node({**config, "name": name, "type": row["protocol"]})
+        except ValueError as exc:
+            raise SubscriptionError("invalid_node", f"The node is not valid ({exc}).") from None
+        config_json = json.dumps(node.config, sort_keys=True, ensure_ascii=False)
+        stamp = now()
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            clash = self.connection.execute(
+                "SELECT 1 FROM network_nodes WHERE subscription_id = ? AND node_key = ? AND id != ?",
+                (row["subscription_id"], node_key(node), node_id),
+            ).fetchone()
+            if clash:
+                raise SubscriptionError("duplicate", "Another node in this group is identical.")
+            changed = unseal(row["config_enc"]) != config_json
+            self.connection.execute(
+                "UPDATE network_nodes SET display_name=?, node_key=?, entry=?, config_enc=?, "
+                "updated_at=? WHERE id=?",
+                (
+                    node.name,
+                    node_key(node),
+                    node.entry,
+                    seal(config_json) if changed else row["config_enc"],
+                    stamp,
+                    node_id,
+                ),
+            )
+            if changed:
+                self.connection.execute(
+                    "DELETE FROM network_node_checks WHERE node_id = ?", (node_id,)
+                )
+        return self.get_node(node_id)
+
+    def delete_manual_node(self, node_id: str) -> None:
+        row = self.connection.execute(
+            "SELECT s.source_kind FROM network_nodes n JOIN network_subscriptions s "
+            "ON s.id = n.subscription_id WHERE n.id = ?",
+            (node_id,),
+        ).fetchone()
+        if row is None:
+            raise NetworkNotFound("Node not found")
+        if row["source_kind"] != "manual":
+            raise SubscriptionError(
+                "not_manual",
+                "Subscription nodes follow their subscription; delete the subscription instead.",
+            )
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            bound = self.connection.execute(
+                "SELECT COUNT(*) FROM profile_network_bindings WHERE node_id = ?", (node_id,)
+            ).fetchone()[0]
+            if bound:
+                raise NodeInUse(bound)
+            self.connection.execute("DELETE FROM network_nodes WHERE id = ?", (node_id,))
 
     def rename_subscription(self, subscription_id: str, name: str, row_version: int) -> dict:
         from .database import StaleWriteError
@@ -590,6 +800,7 @@ class NetworkCatalog:
                 unknown.append(
                     {
                         "node_id": node["id"],
+                        "subscription_id": node["subscription_id"],
                         "label": node["name"],
                         "status": node["status"],
                         "health": check["health"] if check else "unknown",
@@ -610,6 +821,7 @@ class NetworkCatalog:
                     "properties": {
                         "node_id": node["id"],
                         "label": node["name"],
+                        "subscription_id": node["subscription_id"],
                         "subscription_name": node["subscription_name"],
                         "protocol": node["protocol"],
                         "status": node["status"],

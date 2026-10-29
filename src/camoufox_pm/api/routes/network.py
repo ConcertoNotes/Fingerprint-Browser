@@ -16,8 +16,10 @@ from camoufox_pm.api.models.network import (
     BatchCheckRequest,
     BindingRequest,
     CheckSiteRequest,
+    ManualNodesRequest,
     NetworkSettingsUpdate,
     NodeCheckRequest,
+    NodeUpdateRequest,
     SubscriptionCreateRequest,
     SubscriptionSyncRequest,
     SubscriptionUpdateRequest,
@@ -31,6 +33,7 @@ from camoufox_pm.core.network_catalog import (
     NetworkCatalog,
     NetworkNotFound,
     NetworkSecretsUnavailable,
+    NodeInUse,
     SubscriptionHasBindings,
 )
 from camoufox_pm.core.network_probe import ProbeBusy
@@ -68,6 +71,13 @@ async def _perform(operation):
             409,
             "Profiles are bound to nodes of this subscription. Retire them explicitly to delete it.",
             "subscription_bound",
+            [{"bound_profiles": exc.count}],
+        ) from None
+    except NodeInUse as exc:
+        raise ApiError(
+            409,
+            "Profiles are bound to this node. Bind them elsewhere before deleting it.",
+            "node_bound",
             [{"bound_profiles": exc.count}],
         ) from None
     except NodeUnavailable as exc:
@@ -289,6 +299,66 @@ async def get_node(node_id: str):
     return Data(
         success=True, data=await _perform(_value_call(_catalog().get_node, node_id)), message="Node"
     )
+
+
+@router.post(
+    "/manual-nodes", response_model=Data, status_code=201, operation_id="add_manual_network_nodes"
+)
+async def add_manual_nodes(request: ManualNodesRequest):
+    """Fixed nodes: a form entry, or pasted host:port:user:pass lines, share links or YAML."""
+    from camoufox_pm.core.network_uri import parse_manual_text
+
+    await require_admin()
+    catalog = _catalog()
+
+    async def run():
+        group_id = request.group_id or catalog.create_manual_group(request.group_name or "")["id"]
+        if request.node is not None:
+            node = request.node
+            mapping = {
+                "name": node.name or f"{node.server}:{node.port}",
+                "type": "http" if node.type == "https" else node.type,
+                "server": node.server.strip().strip("[]"),
+                "port": node.port,
+                **({"tls": True} if node.type == "https" else {}),
+                **({"username": node.username} if node.username else {}),
+                **({"password": node.password} if node.password else {}),
+            }
+            candidates = [(1, mapping, None)]
+        else:
+            candidates = parse_manual_text(request.text or "", request.default_type)
+            if not candidates:
+                raise SubscriptionError("empty", "Enter at least one node.")
+        return catalog.add_manual_nodes(group_id, candidates)
+
+    result = await _perform(run())
+    await record_audit("add_manual_network_nodes", result["group"]["id"])
+    return Data(success=True, data=result, message="Nodes added")
+
+
+@router.patch("/nodes/{node_id}", response_model=Data, operation_id="update_network_node")
+async def update_node(node_id: str, request: NodeUpdateRequest):
+    await require_admin()
+    changes = request.model_dump(exclude_unset=True)
+    node = await _perform(_value_call(_catalog().update_manual_node, node_id, changes))
+    return Data(success=True, data=node, message="Node updated")
+
+
+@router.delete("/nodes/{node_id}", response_model=Data, operation_id="delete_network_node")
+async def delete_node(node_id: str):
+    await require_admin()
+    await _perform(_value_call(_catalog().delete_manual_node, node_id))
+    await record_audit("delete_network_node", node_id)
+    return Data(success=True, data={"id": node_id}, message="Node deleted")
+
+
+@router.get("/jobs/current", response_model=Data, operation_id="current_network_job")
+async def current_job():
+    """The running batch check, if any, so every page can show its progress."""
+    await require_admin()
+    probe = _manager().network_probe
+    running = [job for job in probe.jobs.values() if job["state"] in {"queued", "running"}]
+    return Data(success=True, data={"job": dict(running[0]) if running else None}, message="Job")
 
 
 @router.post("/nodes/{node_id}/check", response_model=Data, operation_id="check_network_node")

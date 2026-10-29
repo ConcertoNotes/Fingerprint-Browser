@@ -71,7 +71,7 @@ export function NodeDetail({ node, maskIps, expanded, onToggle, busy, selectedPr
   }
 
   return (
-    <article className={`border-b border-line ${expanded ? 'bg-surface' : ''}`}>
+    <article id={`node-${node.id}`} className={`border-b border-line ${expanded ? 'bg-surface' : ''}`}>
       <button type="button" onClick={onToggle} aria-expanded={expanded} className="flex w-full items-start gap-2.5 px-4 py-3 text-left hover:bg-surface">
         <span className="pt-0.5 text-[15px] leading-none" aria-hidden="true">{flag(check?.country_iso) || '·'}</span>
         <span className="min-w-0 flex-1">

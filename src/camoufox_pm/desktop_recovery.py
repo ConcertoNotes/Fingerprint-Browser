@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from threading import Lock
+from typing import Any
 
 # All changing values enter textContent through the local bridge. No remote page
 # is loaded, and no filesystem path/command is accepted from the UI.
@@ -94,7 +95,7 @@ class RecoveryBridge:
         self._status = status
         self._dispatch = dispatch
         self._lock = Lock()
-        self._window = None
+        self._window: Any = None  # webview.Window once created
         self._open_requested = False
 
     def status(self) -> dict:

@@ -13,6 +13,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Clash/Mihomo subscriptions, per-profile Mihomo routing with no direct fallback,
   measured exit locations on an offline world map and IP-quality checks
   (see `docs/network-architecture.md`).
+- Share-link and Base64 subscriptions (ss, vmess, vless, trojan, hysteria2) are
+  imported like Clash documents. Panel lines such as 到期時間 / 剩余流量 are kept off
+  the map as information entries. Fixed proxies bought as IP, port, username and
+  password can be added one by one or pasted in bulk into manual groups.
+- Network map: choose which airport or fixed-node group is shown, click a marker
+  for an info card that follows the map, and watch exits appear while a check
+  runs. New nodes are checked right after import. Fixed marker jitter on hover,
+  bands across the map at ±180°, and fitted views landing off-screen.
 - Light interface. The manager defaults to Simplified Chinese; profile browsers
   keep their fingerprint languages (English by default).
 - New profiles default to the host's operating system. A foreign-OS fingerprint
