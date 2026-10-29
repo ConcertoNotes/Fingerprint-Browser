@@ -115,3 +115,40 @@ async def test_lifecycle_schema_refuses_pre_lifecycle_manager(tmp_path, monkeypa
         monkeypatch.setattr(schema_migrations, "CURRENT_SCHEMA", 3)
         with pytest.raises(ValueError, match="newer manager"):
             schema_migrations.check_schema(db)
+
+
+@pytest.mark.asyncio
+async def test_schema_five_databases_gain_the_network_tables_once(tmp_path):
+    from camoufox_pm.core.models import Profile
+
+    path = tmp_path / "v5.sqlite"
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    await storage.save_profile(Profile(name="Existing"))
+    await storage.close()
+    network_tables = (
+        "network_subscriptions",
+        "network_nodes",
+        "network_node_checks",
+        "network_ip_intel",
+        "profile_network_bindings",
+        "network_settings",
+    )
+    with closing(sqlite3.connect(path)) as db, db:
+        for table in network_tables:
+            db.execute(f"DROP TABLE {table}")
+        db.execute("DELETE FROM manager_features WHERE feature='network-nodes'")
+        db.execute("PRAGMA user_version=5")
+    for _ in range(2):  # resumable and idempotent
+        storage = StorageManager(str(path))
+        await storage.initialize()
+        await storage.close()
+    with closing(sqlite3.connect(path)) as db, db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 6
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert set(network_tables) <= tables
+        assert db.execute(
+            "SELECT version FROM manager_features WHERE feature='network-nodes'"
+        ).fetchone() == (1,)
+        assert db.execute("SELECT name FROM profiles").fetchall() == [("Existing",)]
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []

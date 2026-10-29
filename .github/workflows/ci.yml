@@ -38,7 +38,7 @@ jobs:
       - name: Test
         # Owned SQLite/TCP resources close on failure and cancellation. Catch
         # destructor warnings through pytest's unraisable-exception hook too.
-        run: uv run pytest -m "not browser" --cov --cov-report=term-missing -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true
+        run: uv run pytest -m "not browser and not mihomo" --cov --cov-report=term-missing -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true
 
   frontend:
     name: Frontend

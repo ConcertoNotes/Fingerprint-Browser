@@ -109,11 +109,11 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: '1'
         # Even headless Firefox needs a display-backed software GL context for
         # the hardware identity assertions, as in upstream Camoufox CI.
-        run: xvfb-run -a uv run --no-sync pytest "$CPM_BROWSER_TARGET" -m browser --no-network --junitxml=browser-results.xml
+        run: xvfb-run -a uv run --no-sync pytest "$CPM_BROWSER_TARGET" -m "browser and not mihomo" --no-network --junitxml=browser-results.xml
       - name: Test real browsers against local synthetic sites
         if: runner.os != 'Linux' && (runner.os != 'Windows' || (inputs.raster_mode != 'text-probes' && inputs.raster_mode != 'process-lifecycle' && inputs.raster_mode != 'native-firefox'))
         shell: bash
-        run: uv run --no-sync pytest "$CPM_BROWSER_TARGET" -m browser --no-network --junitxml=browser-results.xml
+        run: uv run --no-sync pytest "$CPM_BROWSER_TARGET" -m "browser and not mihomo" --no-network --junitxml=browser-results.xml
       - name: Verify repeated Windows canvas restarts
         if: runner.os == 'Windows' && inputs.suite != 'recovery' && inputs.suite != 'sync' && inputs.suite != 'automation' && inputs.raster_mode != 'text-probes' && inputs.raster_mode != 'process-lifecycle' && inputs.raster_mode != 'native-firefox'
         shell: pwsh
