@@ -6,6 +6,7 @@ import { Check, Minus, Settings as SettingsIcon, TriangleAlert } from 'lucide-re
 import { useI18n } from '@/components/i18n-provider'
 import type { Translator } from '@/lib/i18n'
 import { SyncSettings } from '@/components/sync-settings'
+import { NetworkSettingsPanel } from '@/components/network-settings'
 import { BrowserSetup } from '@/components/browser-setup'
 import { BackupSettings, UpdateSettings } from '@/components/recovery-settings'
 import { EmptyState } from '@/components/empty-state'
@@ -72,6 +73,7 @@ export default function SettingsPage() {
       ) : (
         <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-5 py-6">
           <BrowserSetup />
+          <NetworkSettingsPanel />
           <UpdateSettings />
           <BackupSettings />
           <SyncSettings />

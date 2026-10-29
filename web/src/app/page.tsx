@@ -29,6 +29,8 @@ import { useI18n } from '@/components/i18n-provider'
 import { useAuth } from '@/components/login-gate'
 import { ProfileSyncPanel, syncPhaseLabel } from '@/components/profile-sync-panel'
 import { profileSyncAPI, type ProfileSyncBinding } from '@/lib/sync-api'
+import { networkAPI, type Binding } from '@/lib/network-api'
+import { flag, maskIp } from '@/lib/network-map'
 import { BrowserSetup } from '@/components/browser-setup'
 import { EmptyState } from '@/components/empty-state'
 import { ConfirmDialog, Modal } from '@/components/modal'
@@ -142,6 +144,7 @@ export default function ProfilesPage() {
     }
   }, [canManageAccess])
 
+  const [networkBindings, setNetworkBindings] = useState<Record<string, Binding>>({})
   const loadRunning = useCallback(async () => {
     try {
       const response = await browsersAPI.active()
@@ -149,7 +152,15 @@ export default function ProfilesPage() {
     } catch {
       // The poll is best-effort; a transient failure must not surface as an error.
     }
-  }, [])
+    if (!canManageAccess) return
+    try {
+      // Bound nodes replace a profile's own proxy; the list shows what applies.
+      const bindings = await networkAPI.bindings()
+      setNetworkBindings(Object.fromEntries(bindings.map(binding => [binding.profile_id, binding])))
+    } catch {
+      // Same best-effort poll; the proxy column falls back to the profile's own settings.
+    }
+  }, [canManageAccess])
 
   const loadGroups = useCallback(async () => {
     try {
@@ -799,7 +810,7 @@ export default function ProfilesPage() {
                   </button>
                 </th>
               ))}
-              <th className="py-2 pr-4 font-medium">{t('Proxy')}</th>
+              <th className="py-2 pr-4 font-medium">{t('Proxy / node')}</th>
               <th className="w-[104px] py-2 pr-5" />
             </tr>
           </thead>
@@ -854,6 +865,8 @@ export default function ProfilesPage() {
                     <ProxyCell
                       profile={profile}
                       checking={checkingProxies.has(profile.id)}
+                      binding={networkBindings[profile.id]}
+                      running={isRunning}
                     />
                   </td>
 
@@ -1062,10 +1075,11 @@ export default function ProfilesPage() {
  * second line only exists once there is something to say, so a list nobody has
  * checked looks exactly as it did before.
  */
-function ProxyCell({ profile, checking }: { profile: Profile; checking: boolean }) {
+function ProxyCell({ profile, checking, binding, running }: { profile: Profile; checking: boolean; binding?: Binding; running: boolean }) {
   const { t } = useI18n()
   const configured = formatProxyString(profile.proxy_config) || '—'
   const check = profile.proxy_check
+  if (binding) return <NodeCell profile={profile} binding={binding} running={running} configured={configured} />
 
   return (
     // Bounded, because a table cell grows to fit its content: an unreachable
@@ -1081,6 +1095,32 @@ function ProxyCell({ profile, checking }: { profile: Profile; checking: boolean 
       ) : check ? (
         <ProxyResult check={check} />
       ) : null}
+    </div>
+  )
+}
+
+/** A bound subscription node: its measured exit and, while running, its live state. */
+function NodeCell({ profile, binding, running, configured }: { profile: Profile; binding: Binding; running: boolean; configured: string }) {
+  const { t } = useI18n()
+  const node = binding.node
+  const runtime = binding.runtime
+  const degraded = running && runtime?.state === 'degraded'
+  const exitIp = (running && runtime?.exit_ip) || node.check?.exit_ip
+  const dot = !binding.usable || degraded ? 'bg-danger' : node.check?.health === 'ok' ? 'bg-ok' : node.check?.health === 'error' ? 'bg-danger' : 'bg-ink-faint'
+  return (
+    <div className="max-w-[280px] leading-tight">
+      <div className="flex items-center gap-1.5">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
+        <span className="truncate" title={node.name}>{flag(node.check?.country_iso)} {node.name}</span>
+      </div>
+      <div className="mt-0.5 truncate font-mono text-[11px] text-ink-faint">
+        {!binding.usable ? t('Node retired: bind another') : degraded ? t('Network down: traffic is blocked') : exitIp ? maskIp(exitIp, false) : t('Exit not measured yet')}
+        {node.check?.latency_ms != null && binding.usable && !degraded ? ` · ${node.check.latency_ms} ms` : ''}
+      </div>
+      <div className="mt-0.5 flex items-center gap-2 text-[11px]">
+        <a className="text-ink-dim underline underline-offset-2 hover:text-ink" href={`/map/?profile=${encodeURIComponent(profile.id)}`}>{t('Change node')}</a>
+        {configured !== '—' && <span className="truncate text-ink-faint/70 line-through" title={t('The bound node replaces this manual proxy')}>{configured}</span>}
+      </div>
     </div>
   )
 }

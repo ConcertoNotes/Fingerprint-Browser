@@ -6,8 +6,9 @@ import { version as reactVersion } from "react";
 
 const config = [
   // Nothing generated: `.next` and `out` are build output, `next-env.d.ts` is
-  // written by Next on every build. (`node_modules` is ignored by default.)
-  { ignores: [".next/**", "out/**", "next-env.d.ts"] },
+  // written by Next on every build, and `public/vendor` is copied from
+  // node_modules by scripts/copy-vendor.mjs. (`node_modules` is ignored by default.)
+  { ignores: [".next/**", "out/**", "next-env.d.ts", "public/vendor/**"] },
   ...nextCoreWebVitals,
   ...nextTypeScript,
   // eslint-config-next asks eslint-plugin-react to detect the React version, and
