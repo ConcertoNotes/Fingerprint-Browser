@@ -100,8 +100,9 @@ from it in January still looks like the same computer in June.
 - **English and Simplified Chinese UI in the 0.6.0 installers.** Russian is
   [merged on main for the combined 0.7.0 release](docs/localization.md).
   Switch languages in the sidebar or on
-  the sign-in screen. The interface starts in English; your choice is saved in
-  this browser. Profile fingerprint languages stay separate.
+  the sign-in screen. The manager starts in Simplified Chinese; your choice is
+  saved in this browser. Profile browsers keep their own fingerprint languages
+  (English by default). Profile fingerprint languages stay separate.
 - **Optional Chrome migration** — import cookies and history from your own Chrome
   profiles ([`extras/chrome_migration`](extras/chrome_migration/README.md)).
 

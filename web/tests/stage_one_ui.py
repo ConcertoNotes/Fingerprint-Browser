@@ -48,6 +48,9 @@ class DesktopUI(unittest.TestCase):
 
     def setUp(self):
         self.context = self.browser.new_context(viewport={"width": 1280, "height": 900})
+        # The manager defaults to Chinese; these English contracts act as a user
+        # who chose English (seeded only when no choice is saved yet).
+        self.context.add_init_script("try { if (!localStorage.getItem('camoufox-pm.ui-language')) localStorage.setItem('camoufox-pm.ui-language', 'en') } catch (error) {}")
         self.page = self.context.new_page()
         self.page.set_default_timeout(8000)
         self.calls = []
@@ -496,6 +499,9 @@ class DesktopUI(unittest.TestCase):
     def test_language_switch_works_when_local_storage_is_unavailable(self):
         self.page.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage disabled') }})")
         self.page.goto(self.origin)
+        # No storage means no saved choice: the manager starts in Chinese.
+        self.page.get_by_label("界面语言", exact=True).select_option("en")
+        expect(self.page.get_by_role("heading", name="Profiles", exact=True)).to_be_visible()
         self.page.get_by_label("Language", exact=True).select_option("zh-CN")
         expect(self.page.get_by_role("heading", name="浏览器配置", exact=True)).to_be_visible()
         self.page.get_by_role("link", name="分组", exact=True).click()
@@ -640,15 +646,15 @@ class DesktopUI(unittest.TestCase):
         expect(self.page.get_by_text("不支持 SOCKS4 凭据。需要认证时请使用 SOCKS5、HTTP 或 HTTPS 代理。", exact=True)).to_be_visible()
 
 
-    def test_interface_starts_in_english_even_for_a_chinese_browser(self):
+    def test_manager_starts_in_chinese_even_for_an_english_browser(self):
         self.context.close()
-        self.context = self.browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
+        self.context = self.browser.new_context(locale="en-US", viewport={"width": 1280, "height": 900})
         self.page = self.context.new_page()
         self.page.set_default_timeout(8000)
         self.page.route("**/api/v1/**", self.route)
         self.page.goto(self.origin)
-        expect(self.page.locator("html")).to_have_attribute("lang", "en")
-        expect(self.page.get_by_role("heading", name="Profiles", exact=True)).to_be_visible()
+        expect(self.page.locator("html")).to_have_attribute("lang", "zh-CN")
+        expect(self.page.get_by_role("heading", name="浏览器配置", exact=True)).to_be_visible()
 
     def test_new_profiles_default_to_the_host_os_and_warn_about_others(self):
         self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}

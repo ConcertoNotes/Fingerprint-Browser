@@ -173,8 +173,8 @@ class OnboardingLocaleUI(Localized, DesktopUI):
             "Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage disabled') }})"
         )
         self.page.goto(self.origin + "/proxies/")
-        # No storage means no saved choice: the interface starts in English.
-        self.page.get_by_label("Language", exact=True).select_option(self.ui_locale)
+        # No storage means no saved choice: the manager starts in Chinese.
+        self.page.get_by_label("界面语言", exact=True).select_option(self.ui_locale)
         self.label("Language").select_option("en")
         self.page.get_by_label("Language", exact=True).select_option(self.ui_locale)
         self.page.set_viewport_size({"width": 375, "height": 812})

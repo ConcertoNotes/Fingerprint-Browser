@@ -24,10 +24,12 @@ export function translate(locale: Locale, message: string, values: TranslationVa
 }
 
 /**
- * The interface starts in English; a language chosen in the selector is kept.
- * Browser language preferences are deliberately not followed.
+ * The manager starts in Simplified Chinese; a language chosen in the selector
+ * is kept. Browser language preferences are deliberately not followed. This is
+ * the manager's own interface only: profile browsers keep their fingerprint
+ * languages (English by default).
  */
 export function resolveLocale(saved: string | null): Locale {
   if (saved === 'en' || saved === 'ru' || saved === 'zh-CN') return saved
-  return 'en'
+  return 'zh-CN'
 }

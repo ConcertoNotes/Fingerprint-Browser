@@ -17,8 +17,9 @@ unreleased changes for the combined 0.7.0 work block, not a separate release.
 - Interface language belongs to the manager only. Do not copy it into profile
   languages, locale, timezone or fingerprint, and do not write profiles when it
   changes. Keep drafts intact when another tab changes the selected language.
-- Start in English until the user makes an explicit choice; browser language
-  preferences are not followed. Persist that choice when storage is
+- Start in Simplified Chinese until the user makes an explicit choice; browser
+  language preferences are not followed. Profile browsers keep their fingerprint
+  languages (English by default). Persist that choice when storage is
   available; blocked storage must still allow switching for the current visit.
 
 ## Verification

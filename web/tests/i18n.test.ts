@@ -7,12 +7,12 @@ import { catalogs, resolveLocale, translate } from '../src/lib/i18n'
 
 const placeholders = (text: string) => [...new Set(text.match(/\{\w+\}/g) ?? [])].sort()
 
-test('the interface defaults to English and keeps a saved choice', () => {
+test('the manager defaults to Simplified Chinese and keeps a saved choice', () => {
   assert.equal(resolveLocale('en'), 'en')
   assert.equal(resolveLocale('zh-CN'), 'zh-CN')
   assert.equal(resolveLocale('ru'), 'ru')
-  assert.equal(resolveLocale(null), 'en')
-  assert.equal(resolveLocale('unsupported'), 'en')
+  assert.equal(resolveLocale(null), 'zh-CN')
+  assert.equal(resolveLocale('unsupported'), 'zh-CN')
 })
 
 test('English and unknown diagnostics fall back to their original text', () => {

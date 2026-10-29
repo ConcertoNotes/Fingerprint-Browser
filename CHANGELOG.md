@@ -13,7 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Clash/Mihomo subscriptions, per-profile Mihomo routing with no direct fallback,
   measured exit locations on an offline world map and IP-quality checks
   (see `docs/network-architecture.md`).
-- Light interface; English is the default interface language.
+- Light interface. The manager defaults to Simplified Chinese; profile browsers
+  keep their fingerprint languages (English by default).
 - New profiles default to the host's operating system. A foreign-OS fingerprint
   made Camoufox register that system's whole font set at every start, which on
   macOS could render browser text garbled and made the browser crawl.
