@@ -1,4 +1,4 @@
-"""Camoufox Profile Manager REST API."""
+"""噜噜指纹浏览器 REST API (derived from Camoufox Profile Manager)."""
 
 import asyncio
 import mimetypes
@@ -57,7 +57,7 @@ maintenance_gate = MaintenanceGate(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize shared resources on startup and clean up on shutdown."""
-    logger.info("Starting Camoufox Profile Manager API...")
+    logger.info("Starting LuLu Fingerprint Browser API...")
 
     if maintenance_gate.blocked:
         raise MaintenanceBlocked(
@@ -151,7 +151,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Camoufox Profile Manager API",
+    title="噜噜指纹浏览器 API",
     description=(
         "Self-hosted, open-source antidetect browser profile manager built on "
         "Camoufox. Manage profiles and groups, generate fingerprints, launch the "

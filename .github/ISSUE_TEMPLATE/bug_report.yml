@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with Camoufox Profile Manager
+description: Report a problem with 噜噜指纹浏览器
 labels: ["bug"]
 body:
   - type: markdown

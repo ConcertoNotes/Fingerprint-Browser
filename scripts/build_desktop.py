@@ -36,10 +36,10 @@ def package_desktop() -> list[Path]:
         stage = ROOT / "build" / "dmg"
         shutil.rmtree(stage, ignore_errors=True)
         stage.mkdir(parents=True)
-        shutil.copytree(DIST / "Camoufox Profile Manager.app", stage / "Camoufox Profile Manager.app", symlinks=True)
+        shutil.copytree(DIST / "噜噜指纹浏览器.app", stage / "噜噜指纹浏览器.app", symlinks=True)
         (stage / "Applications").symlink_to("/Applications")
         output = DIST / f"camoufox-pm-macos-{arch}.dmg"
-        subprocess.run(["hdiutil", "create", "-volname", "Camoufox Profile Manager", "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(output)], check=True)
+        subprocess.run(["hdiutil", "create", "-volname", "噜噜指纹浏览器", "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(output)], check=True)
         return [output]
     if sys.platform == "win32":
         makensis = shutil.which("makensis") or str(Path("C:/Program Files (x86)/NSIS/makensis.exe"))
@@ -97,13 +97,13 @@ def package_desktop() -> list[Path]:
     deb_arch = {"x86_64": "amd64", "arm64": "arm64"}[arch]
     (control / "control").write_text(
         f"Package: camoufox-pm\nVersion: {version}\nArchitecture: {deb_arch}\n"
-        "Maintainer: Camoufox Profile Manager Contributors\n"
+        "Maintainer: ConcertoNotes <https://github.com/ConcertoNotes>\n"
         "Section: web\nPriority: optional\n"
         "Depends: libc6 (>= 2.35), libstdc++6 (>= 12), libx11-6, libegl1, libgl1, libwayland-server0, libxkbcommon0, libxcb-cursor0, "
         "libnss3, libasound2t64 | libasound2 (>= 1.2.6), libxcomposite1, libxdamage1, libxrandr2, libxtst6, libgbm1, "
         "libgtk-3-0, libdbus-1-3, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, "
         "libxcb-render-util0, libxcb-shape0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon-x11-0, libx11-xcb1\n"
-        "Description: Persistent Camoufox browser profile manager\n"
+        "Description: LuLu Fingerprint Browser - persistent Camoufox browser profile manager\n"
     )
     deb = DIST / f"camoufox-pm-linux-{arch}.deb"
     subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(deb_root), str(deb)], check=True)

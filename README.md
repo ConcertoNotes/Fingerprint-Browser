@@ -1,6 +1,6 @@
-# Camoufox Profile Manager
+# 噜噜指纹浏览器 (LuLu Fingerprint Browser)
 
-[![CI](https://github.com/polyackiy/camoufox-profile-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/polyackiy/camoufox-profile-manager/actions/workflows/ci.yml)
+[![CI](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml/badge.svg)](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Camoufox](https://img.shields.io/badge/browser-Camoufox-orange.svg)](https://github.com/daijro/camoufox)
@@ -9,14 +9,28 @@ A self-hosted, open-source manager for [Camoufox](https://github.com/daijro/camo
 antidetect browser profiles — a free alternative to AdsPower, Dolphin, Multilogin
 or GoLogin, for people who would rather run it themselves.
 
+> **Based on [Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager).**
+> 噜噜指纹浏览器 is a derivative work (二次开发) of that MIT-licensed project by the
+> Camoufox Profile Manager Contributors, maintained by
+> [ConcertoNotes](https://github.com/ConcertoNotes). It adds Clash/Mihomo
+> subscriptions, per-profile Mihomo routing, measured exit locations on a world map,
+> IP-quality checks and a light interface — see
+> [Subscriptions, exit map and node binding](#subscriptions-exit-map-and-node-binding-unreleased).
+> Everything else, and the history before the fork, comes from the original project;
+> links to its issues and CI runs in older documents point there on purpose.
+> Internal names (`camoufox_pm`, the `camoufox-pm` command, `CPM_*` settings) are
+> unchanged so scripts and existing data keep working.
+
 Each profile is **one long-lived machine**. It keeps the same fingerprint every
 session, along with its own cookies, storage and history, so an account opened
 from it in January still looks like the same computer in June.
 
-> **Desktop release:** [download the latest stable release](https://github.com/polyackiy/camoufox-profile-manager/releases/latest) from **Assets**. macOS
-> Apple Silicon and Intel, Windows x64, and Ubuntu/Debian x64 builds are produced
-> by CI. Releases remain unsigned; certificates and macOS notarization are not planned
-> and are not release requirements. OS security warnings can appear.
+> **Desktop release:** this repository has not published installers yet; run it
+> [from source](#from-source-developers). Once released, installers appear under
+> [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases) → **Assets**
+> (macOS Apple Silicon and Intel, Windows x64 and Ubuntu/Debian x64 are built by CI).
+> Releases are unsigned; certificates and macOS notarization are not planned and
+> are not release requirements. OS security warnings can appear.
 > See [Getting started](docs/getting-started.md) / [Начало работы](docs/getting-started.ru.md).
 > See [installation evidence and coverage limits](docs/desktop-acceptance.md).
 > Chrome migration remains experimental.
@@ -86,8 +100,8 @@ from it in January still looks like the same computer in June.
 - **English and Simplified Chinese UI in the 0.6.0 installers.** Russian is
   [merged on main for the combined 0.7.0 release](docs/localization.md).
   Switch languages in the sidebar or on
-  the sign-in screen. Your choice is saved in this browser; the first visit
-  follows its language preferences. Profile fingerprint languages stay separate.
+  the sign-in screen. The interface starts in English; your choice is saved in
+  this browser. Profile fingerprint languages stay separate.
 - **Optional Chrome migration** — import cookies and history from your own Chrome
   profiles ([`extras/chrome_migration`](extras/chrome_migration/README.md)).
 
@@ -121,7 +135,7 @@ of plausible parts.
 
 ### Desktop app — recommended
 
-1. Open [Releases](https://github.com/polyackiy/camoufox-profile-manager/releases)
+1. Open [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases)
    and choose the installer in **Assets** for your computer:
 
    | Computer | Download |
@@ -131,7 +145,7 @@ of plausible parts.
    | Windows 10/11, Intel/AMD 64-bit | `camoufox-pm-windows-x86_64-setup.exe` |
    | Ubuntu 22.04+/compatible Debian, Intel/AMD 64-bit | `camoufox-pm-linux-x86_64.deb` |
 
-2. Install and open **Camoufox Profile Manager**. You do not need Python, Node.js
+2. Install and open **噜噜指纹浏览器**. You do not need Python, Node.js
    or a terminal. On Mac, drag the app into Applications first.
 3. Click **Install browser** in the app, wait for the download, and create your
    first profile. The app shows progress and provides a retry if installation fails.
@@ -146,8 +160,8 @@ backups, Trash, updates, and where your data lives.
 Install [uv](https://docs.astral.sh/uv/) and Node.js 20.9+; uv manages Python.
 
 ```bash
-git clone https://github.com/polyackiy/camoufox-profile-manager.git
-cd camoufox-profile-manager
+git clone https://github.com/ConcertoNotes/Fingerprint-Browser.git
+cd Fingerprint-Browser
 uv sync --extra desktop
 uv run python scripts/build_webui.py
 uv run python -m camoufox_pm.desktop
@@ -414,7 +428,10 @@ that would otherwise be against a service's rules acceptable.
 
 ## License
 
-[MIT](LICENSE) © Camoufox Profile Manager Contributors.
+[MIT](LICENSE). Original work © Camoufox Profile Manager Contributors
+([polyackiy/camoufox-profile-manager](https://github.com/polyackiy/camoufox-profile-manager));
+modifications © ConcertoNotes. The original copyright and permission notice are
+kept in [LICENSE](LICENSE) as the licence requires.
 
 Built on [Camoufox](https://github.com/daijro/camoufox) by daijro.
 

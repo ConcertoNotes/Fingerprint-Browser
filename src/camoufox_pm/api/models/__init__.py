@@ -1,4 +1,4 @@
-"""API models for Camoufox Profile Manager."""
+"""API models for 噜噜指纹浏览器."""
 
 from .groups import (
     GroupCreateRequest,

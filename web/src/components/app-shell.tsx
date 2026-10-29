@@ -110,7 +110,7 @@ function Wordmark() {
         <rect x="3" y="6.8" width="10" height="2.4" rx="1.2" fill="var(--color-signal)" opacity="0.62" />
         <rect x="5.5" y="11.1" width="5" height="2.4" rx="1.2" fill="var(--color-signal)" opacity="0.32" />
       </svg>
-      <span className="text-[13px] font-semibold tracking-tight">Camoufox</span>
+      <span className="text-[13px] font-semibold tracking-tight">噜噜指纹浏览器</span>
     </>
   )
 }

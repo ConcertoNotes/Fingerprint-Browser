@@ -8,7 +8,7 @@ from threading import Lock
 RECOVERY_HTML = """<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src 'none'">
-<title>Update recovery — Camoufox Profile Manager</title>
+<title>Update recovery — 噜噜指纹浏览器</title>
 <style>
 :root{color-scheme:light dark;font:16px/1.55 system-ui,sans-serif}body{margin:0;padding:32px;max-width:720px}h1{font-size:24px;line-height:1.25}p{max-width:65ch}button,input{font:inherit}button{min-height:44px;padding:8px 16px;margin:4px 8px 4px 0;border:1px solid #808080;border-radius:7px;cursor:pointer}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible{outline:3px solid #4187e8;outline-offset:3px}label{display:flex;gap:12px;align-items:center;min-height:44px}.error{color:light-dark(#a31515,#ffb4b4)}[hidden]{display:none!important}.panel{border:1px solid #808080;border-radius:8px;padding:16px;margin:20px 0}
 </style>
@@ -154,7 +154,7 @@ def show_recovery(
 
     bridge = RecoveryBridge(status, dispatch)
     bridge._window = webview.create_window(
-        "Camoufox Profile Manager — Update recovery",
+        "噜噜指纹浏览器 — Update recovery",
         html=RECOVERY_HTML,
         js_api=bridge,
         width=780,

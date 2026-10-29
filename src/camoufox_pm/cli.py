@@ -100,7 +100,7 @@ def main() -> None:
     settings = get_settings()
     parser = argparse.ArgumentParser(
         prog="camoufox-pm",
-        description="Run the Camoufox Profile Manager (API + web UI) on one port.",
+        description="Run LuLu Fingerprint Browser (API + web UI) on one port.",
     )
     parser.add_argument("--host", default=settings.host, help="Bind address")
     parser.add_argument("--port", type=int, default=settings.port, help="Port")

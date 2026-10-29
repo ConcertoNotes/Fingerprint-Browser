@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def executable_path() -> Path:
     if sys.platform == "darwin":
-        return ROOT / "dist" / "Camoufox Profile Manager.app" / "Contents" / "MacOS" / "camoufox-pm"
+        return ROOT / "dist" / "噜噜指纹浏览器.app" / "Contents" / "MacOS" / "camoufox-pm"
     name = "camoufox-pm.exe" if sys.platform == "win32" else "camoufox-pm"
     return ROOT / "dist" / "camoufox-pm" / name
 

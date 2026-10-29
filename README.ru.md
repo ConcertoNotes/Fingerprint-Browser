@@ -1,6 +1,6 @@
-# Camoufox Profile Manager
+# 噜噜指纹浏览器 (LuLu Fingerprint Browser)
 
-[![CI](https://github.com/polyackiy/camoufox-profile-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/polyackiy/camoufox-profile-manager/actions/workflows/ci.yml)
+[![CI](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml/badge.svg)](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Camoufox](https://img.shields.io/badge/browser-Camoufox-orange.svg)](https://github.com/daijro/camoufox)
@@ -14,7 +14,14 @@ Self-hosted менеджер профилей антидетект-браузе�
 фингерпринт от запуска к запуску вместе со своими куками, хранилищем и историей,
 так что аккаунт, открытый с него в январе, в июне выглядит с того же компьютера.
 
-> **Настольная версия:** [скачать последний стабильный релиз](https://github.com/polyackiy/camoufox-profile-manager/releases/latest), раздел **Assets**. CI собирает macOS Apple Silicon и Intel, Windows x64 и
+> **Основано на [Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager).**
+> 噜噜指纹浏览器 — производная работа (доработка) этого проекта под лицензией MIT,
+> поддерживается [ConcertoNotes](https://github.com/ConcertoNotes). Добавлены подписки
+> Clash/Mihomo, отдельный Mihomo для каждого профиля, карта измеренных выходов,
+> проверка качества IP и светлый интерфейс. Внутренние имена (`camoufox_pm`,
+> команда `camoufox-pm`, настройки `CPM_*`) не изменены.
+
+> **Настольная версия:** этот репозиторий ещё не публиковал установщики; запускайте из исходников. После выпуска они появятся в [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases), раздел **Assets**. CI собирает macOS Apple Silicon и Intel, Windows x64 и
 > Ubuntu/Debian x64. Релизы остаются без подписи; получать сертификаты и проходить
 > нотариализацию macOS не планируем. Они не являются условиями выпуска.
 > Возможны предупреждения системы.
@@ -97,7 +104,7 @@ Self-hosted менеджер профилей антидетект-браузе�
 
 ### Готовое приложение — рекомендуется
 
-1. Откройте [Releases](https://github.com/polyackiy/camoufox-profile-manager/releases)
+1. Откройте [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases)
    и выберите установщик в **Assets**:
 
    | Компьютер | Файл |
@@ -107,7 +114,7 @@ Self-hosted менеджер профилей антидетект-браузе�
    | Windows 10/11, Intel/AMD 64 бит | `camoufox-pm-windows-x86_64-setup.exe` |
    | Ubuntu 22.04+/совместимый Debian, Intel/AMD 64 бит | `camoufox-pm-linux-x86_64.deb` |
 
-2. Установите и откройте **Camoufox Profile Manager**. Python, Node.js и терминал
+2. Установите и откройте **噜噜指纹浏览器**. Python, Node.js и терминал
    не нужны. На Mac сначала перенесите приложение в Applications.
 3. Нажмите **Install browser**, дождитесь загрузки и создайте первый профиль.
    Приложение показывает ход установки и позволяет повторить её при ошибке.
@@ -122,8 +129,8 @@ Self-hosted менеджер профилей антидетект-браузе�
 Установите [uv](https://docs.astral.sh/uv/) и Node.js 20.9+. Python установит uv.
 
 ```bash
-git clone https://github.com/polyackiy/camoufox-profile-manager.git
-cd camoufox-profile-manager
+git clone https://github.com/ConcertoNotes/Fingerprint-Browser.git
+cd Fingerprint-Browser
 uv sync --extra desktop
 uv run python scripts/build_webui.py
 uv run python -m camoufox_pm.desktop
@@ -278,7 +285,9 @@ uv run pytest -m browser          # запускает настоящий бра
 
 ## Лицензия
 
-[MIT](LICENSE) © Camoufox Profile Manager Contributors.
+[MIT](LICENSE). Исходная работа © Camoufox Profile Manager Contributors
+([polyackiy/camoufox-profile-manager](https://github.com/polyackiy/camoufox-profile-manager));
+изменения © ConcertoNotes.
 
 Построено на [Camoufox](https://github.com/daijro/camoufox) от daijro.
 

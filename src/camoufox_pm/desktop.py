@@ -12,6 +12,8 @@ from pathlib import Path
 
 import uvicorn
 
+from camoufox_pm import APP_NAME, APP_NAME_ASCII
+
 
 class AlreadyRunningError(RuntimeError):
     """The same desktop data directory is already open in another process."""
@@ -39,7 +41,7 @@ def _instance_lock(data_dir: Path):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise AlreadyRunningError(
-                "Camoufox Profile Manager is already open. Switch to its existing window."
+                f"{APP_NAME_ASCII} is already open. Switch to its existing window."
             ) from exc
         try:
             yield
@@ -79,9 +81,7 @@ def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> bool:
     return not thread.is_alive() and not server.force_exit
 
 
-def run_desktop(
-    host: str = "127.0.0.1", port: int = 0, title: str = "Camoufox Profile Manager"
-) -> None:
+def run_desktop(host: str = "127.0.0.1", port: int = 0, title: str = APP_NAME) -> None:
     """Serve on a reserved socket and stop browsers/server when the window closes."""
     try:
         import webview
@@ -108,7 +108,7 @@ def run_desktop(
             except OSError as exc:
                 raise RuntimeError(
                     f"Cannot start on {host}:{port}. Close the app using that port, "
-                    "or start Camoufox Profile Manager without a fixed port."
+                    f"or start {APP_NAME_ASCII} without a fixed port."
                 ) from exc
             listener.listen(128)
             actual_port = listener.getsockname()[1]
@@ -195,10 +195,11 @@ def _show_error(message: str) -> None:
         import webview
 
         webview.create_window(
-            "Camoufox Profile Manager",
+            APP_NAME,
             html=(
-                "<html><body style='font:18px system-ui;padding:24px'>"
-                "<h1>Camoufox Profile Manager</h1><p>" + html.escape(message) + "</p></body></html>"
+                "<html><head><meta charset='utf-8'></head>"
+                "<body style='font:18px system-ui;padding:24px'>"
+                f"<h1>{html.escape(APP_NAME)}</h1><p>" + html.escape(message) + "</p></body></html>"
             ),
             width=600,
             height=300,

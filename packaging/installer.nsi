@@ -1,11 +1,12 @@
+﻿; Saved as UTF-8 with a BOM so makensis reads the Chinese product name correctly.
 Unicode True
 ; Preserve the pinned fpgen model dates through installation.
 SetDateSave on
 !include "MUI2.nsh"
 !include "${UNINSTALL_MANIFEST}"
-Name "Camoufox Profile Manager"
+Name "噜噜指纹浏览器"
 OutFile "${OUTPUT}"
-InstallDir "$LOCALAPPDATA\Programs\Camoufox Profile Manager"
+InstallDir "$LOCALAPPDATA\Programs\LuLu Fingerprint Browser"
 RequestExecutionLevel user
 !define MUI_ABORTWARNING
 !define MUI_ICON "${ICON}"
@@ -73,10 +74,10 @@ Section "Install"
     SetOutPath "$INSTDIR"
     File /r "${BUNDLE}\*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
-    CreateDirectory "$SMPROGRAMS\Camoufox Profile Manager"
-    CreateShortcut "$SMPROGRAMS\Camoufox Profile Manager\Camoufox Profile Manager.lnk" "$INSTDIR\camoufox-pm.exe"
-    CreateShortcut "$SMPROGRAMS\Camoufox Profile Manager\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM" "DisplayName" "Camoufox Profile Manager"
+    CreateDirectory "$SMPROGRAMS\噜噜指纹浏览器"
+    CreateShortcut "$SMPROGRAMS\噜噜指纹浏览器\噜噜指纹浏览器.lnk" "$INSTDIR\camoufox-pm.exe"
+    CreateShortcut "$SMPROGRAMS\噜噜指纹浏览器\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM" "DisplayName" "噜噜指纹浏览器"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM" "UninstallString" '"$INSTDIR\Uninstall.exe"'
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM" "DisplayIcon" "$INSTDIR\camoufox-pm.exe,0"
@@ -94,9 +95,9 @@ SectionEnd
 Section "Uninstall"
     !insertmacro ValidateBundlePaths "un."
     !insertmacro RemoveBundleFiles
-    Delete "$SMPROGRAMS\Camoufox Profile Manager\Camoufox Profile Manager.lnk"
-    Delete "$SMPROGRAMS\Camoufox Profile Manager\Uninstall.lnk"
-    RMDir "$SMPROGRAMS\Camoufox Profile Manager"
+    Delete "$SMPROGRAMS\噜噜指纹浏览器\噜噜指纹浏览器.lnk"
+    Delete "$SMPROGRAMS\噜噜指纹浏览器\Uninstall.lnk"
+    RMDir "$SMPROGRAMS\噜噜指纹浏览器"
     Delete "$INSTDIR\Uninstall.exe"
     RMDir "$INSTDIR"
     DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CamoufoxPM"

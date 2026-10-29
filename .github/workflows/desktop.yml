@@ -89,7 +89,7 @@ jobs:
         if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-        run: codesign --deep --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "dist/Camoufox Profile Manager.app"
+        run: codesign --deep --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "dist/噜噜指纹浏览器.app"
       - name: Import Windows certificate and sign app
         if: runner.os == 'Windows' && env.WINDOWS_CERT_PFX != ''
         shell: pwsh

@@ -29,7 +29,7 @@ server or generating encryption keys. For example on macOS, invoke the bundle
 executable from Terminal (adjust the installed application name/path):
 
 ```sh
-"/Applications/Camoufox Profile Manager.app/Contents/MacOS/camoufox-pm" --desktop update-recovery status
+"/Applications/噜噜指纹浏览器.app/Contents/MacOS/camoufox-pm" --desktop update-recovery status
 ```
 
 On Windows, invoke the installed `camoufox-pm.exe` with these arguments from

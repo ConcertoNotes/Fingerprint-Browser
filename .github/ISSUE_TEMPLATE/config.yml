@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Questions & discussions
-    url: https://github.com/polyackiy/camoufox-profile-manager/discussions
-    about: Ask questions and share ideas in GitHub Discussions.
+  - name: Questions
+    url: https://github.com/ConcertoNotes/Fingerprint-Browser/issues
+    about: Search existing issues for 噜噜指纹浏览器 before opening a new one.
+  - name: Original project (Camoufox Profile Manager)
+    url: https://github.com/polyackiy/camoufox-profile-manager
+    about: 噜噜指纹浏览器 is derived from Camoufox Profile Manager.
   - name: Camoufox browser
     url: https://github.com/daijro/camoufox
     about: Issues with the Camoufox browser itself belong upstream.

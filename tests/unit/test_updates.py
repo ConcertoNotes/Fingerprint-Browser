@@ -78,7 +78,7 @@ async def test_new_stable_release_uses_official_page_and_filters_foreign_assets(
     assert len(requests) == 1
     assert (
         str(requests[0].url)
-        == "https://api.github.com/repos/polyackiy/camoufox-profile-manager/releases/latest"
+        == "https://api.github.com/repos/ConcertoNotes/Fingerprint-Browser/releases/latest"
     )
     assert requests[0].headers["Accept"] == "application/vnd.github+json"
 

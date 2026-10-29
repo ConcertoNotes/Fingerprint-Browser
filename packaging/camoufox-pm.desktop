@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Camoufox Profile Manager
+Name=LuLu Fingerprint Browser
+Name[zh_CN]=噜噜指纹浏览器
 Comment=Manage persistent Camoufox browser profiles
+Comment[zh_CN]=管理持久化的 Camoufox 浏览器配置
 Exec=camoufox-pm
 Icon=camoufox-pm
 Terminal=false

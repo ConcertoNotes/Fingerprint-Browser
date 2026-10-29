@@ -1,6 +1,7 @@
 # Contributing
 
-Thanks for your interest in improving Camoufox Profile Manager! This document
+Thanks for your interest in improving 噜噜指纹浏览器 (derived from
+[Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager))! This document
 describes how to set up a development environment and the conventions we follow.
 
 ## Development setup

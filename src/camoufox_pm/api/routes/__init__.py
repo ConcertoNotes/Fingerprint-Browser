@@ -1,4 +1,4 @@
-"""API routes for Camoufox Profile Manager."""
+"""API routes for 噜噜指纹浏览器."""
 
 from . import groups, profiles, schedules, system
 

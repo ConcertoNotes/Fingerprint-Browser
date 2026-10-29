@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from camoufox_pm import __version__
 
-REPOSITORY = "polyackiy/camoufox-profile-manager"
+REPOSITORY = "ConcertoNotes/Fingerprint-Browser"
 RELEASES = f"https://github.com/{REPOSITORY}/releases"
 
 

@@ -230,7 +230,7 @@ def install_copy(destination):
             subprocess.run(
                 [
                     "ditto",
-                    str(mount / "Camoufox Profile Manager.app"),
+                    str(mount / "噜噜指纹浏览器.app"),
                     str(destination / "Manager.app"),
                 ],
                 check=True,

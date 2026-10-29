@@ -4,7 +4,7 @@
 
 ## Download and open
 
-Open the [releases page](https://github.com/polyackiy/camoufox-profile-manager/releases)
+Open the [releases page](https://github.com/ConcertoNotes/Fingerprint-Browser/releases)
 and choose a desktop installer from a release's **Assets**. Python, Node.js and a
 terminal are unnecessary for desktop packages. Installer builds are attached by
 the release workflow; older releases may only contain Python packages.
@@ -41,7 +41,7 @@ below; the current 0.6.0 installers have English and Simplified Chinese. Choose
 manager remembers your choice when local storage is available. Interface language
 never changes a profile's fingerprint languages, timezone, cookies or settings.
 
-1. Open **Camoufox Profile Manager**. It keeps your data separately from the installed app.
+1. Open **噜噜指纹浏览器**. It keeps your data separately from the installed app.
 2. Choose **Install browser** in the setup banner. Internet access is needed for
    this initial download. Progress and errors appear in the app; if downloading
    fails, retry. **Retry download** is also available in Settings.
@@ -106,6 +106,9 @@ The desktop app uses the same folder regardless of where you launch it:
 | Windows | `%LOCALAPPDATA%\Camoufox Profile Manager\` |
 | Linux | `$XDG_DATA_HOME/camoufox-profile-manager/` or `~/.local/share/camoufox-profile-manager/` |
 
+The folder keeps the original project's name on purpose, so data from an existing
+installation is found after updating to 噜噜指纹浏览器.
+
 Keep the whole folder, including `profiles.db`, browser data, backups and
 `secret.key`. A fresh desktop install generates this encryption key; losing it
 can make encrypted proxy passwords unreadable. Reinstalling the app or uninstalling
@@ -124,8 +127,8 @@ private information.
 Install [uv](https://docs.astral.sh/uv/) and Node.js 20.9+; uv manages Python.
 
 ```bash
-git clone https://github.com/polyackiy/camoufox-profile-manager.git
-cd camoufox-profile-manager
+git clone https://github.com/ConcertoNotes/Fingerprint-Browser.git
+cd Fingerprint-Browser
 uv sync --extra desktop
 uv run python scripts/build_webui.py
 uv run python -m camoufox_pm.desktop

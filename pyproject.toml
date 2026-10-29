@@ -1,11 +1,11 @@
 [project]
 name = "camoufox-profile-manager"
 version = "0.6.0"
-description = "Self-hosted, open-source antidetect browser profile manager built on Camoufox"
+description = "噜噜指纹浏览器: self-hosted, open-source antidetect browser profile manager built on Camoufox (derived from Camoufox Profile Manager)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Camoufox Profile Manager Contributors" }]
+authors = [{ name = "ConcertoNotes" }, { name = "Camoufox Profile Manager Contributors" }]
 keywords = [
     "camoufox",
     "antidetect",
@@ -78,9 +78,10 @@ camoufox-sync-relay = "camoufox_pm.sync.relay_cli:main"
 camoufox-sync-recovery = "camoufox_pm.sync.recovery_workflow:main"
 
 [project.urls]
-Homepage = "https://github.com/polyackiy/camoufox-profile-manager"
-Repository = "https://github.com/polyackiy/camoufox-profile-manager"
-Issues = "https://github.com/polyackiy/camoufox-profile-manager/issues"
+Homepage = "https://github.com/ConcertoNotes/Fingerprint-Browser"
+Repository = "https://github.com/ConcertoNotes/Fingerprint-Browser"
+Upstream = "https://github.com/polyackiy/camoufox-profile-manager"
+Issues = "https://github.com/ConcertoNotes/Fingerprint-Browser/issues"
 
 [build-system]
 requires = ["hatchling"]

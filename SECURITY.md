@@ -3,7 +3,7 @@
 ## Supported versions
 
 This project is pre-1.0 and under active development. Security fixes target the
-[latest stable release](https://github.com/polyackiy/camoufox-profile-manager/releases/latest).
+[latest stable release](https://github.com/ConcertoNotes/Fingerprint-Browser/releases/latest).
 Upgrade to that release; older release lines do not receive separate backports.
 
 | Version | Supported |
@@ -18,9 +18,13 @@ identify the changes delivered by each published version.
 
 ## Reporting a vulnerability
 
-Use this repository's [private vulnerability reporting form](https://github.com/polyackiy/camoufox-profile-manager/security/advisories/new)
-(**Security → Report a vulnerability**). Private reporting is enabled. Avoid
-public issues for unpatched vulnerabilities. See
+Use this repository's [private vulnerability reporting form](https://github.com/ConcertoNotes/Fingerprint-Browser/security/advisories/new)
+(**Security → Report a vulnerability**). If the form is not available, contact the
+maintainer [@ConcertoNotes](https://github.com/ConcertoNotes) on GitHub without
+including vulnerability details, and a private channel will be arranged. Avoid
+public issues for unpatched vulnerabilities. Problems that also affect the original
+project can be reported to
+[Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager/security). See
 [GitHub's reporting instructions](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
 if you cannot find the form.
 

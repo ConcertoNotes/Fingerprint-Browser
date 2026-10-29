@@ -4,7 +4,7 @@
 
 ## Скачать и открыть
 
-Откройте [страницу релизов](https://github.com/polyackiy/camoufox-profile-manager/releases)
+Откройте [страницу релизов](https://github.com/ConcertoNotes/Fingerprint-Browser/releases)
 и выберите установщик в разделе **Assets**. Для готового приложения не нужны
 Python, Node.js и терминал. Установщики собираются автоматически для новых
 релизов; в старых релизах могут быть только Python-пакеты.
@@ -42,7 +42,7 @@ SmartScreen в Windows. На служебном компьютере может 
 также доступен до входа. При доступном локальном хранилище выбор сохраняется.
 Язык менеджера не меняет языки отпечатка, часовой пояс, куки и настройки профилей.
 
-1. Откройте **Camoufox Profile Manager**. Данные хранятся отдельно от программы.
+1. Откройте **噜噜指纹浏览器**. Данные хранятся отдельно от программы.
 2. Нажмите **Install browser** («Установить браузер») в стартовой панели. Для
    первой загрузки нужен интернет. Приложение показывает ход установки и ошибки;
    при сбое повторите попытку. В Settings есть **Retry download**.
@@ -108,6 +108,9 @@ Trash не очищается автоматически; после восст�
 | Windows | `%LOCALAPPDATA%\Camoufox Profile Manager\` |
 | Linux | `$XDG_DATA_HOME/camoufox-profile-manager/` или `~/.local/share/camoufox-profile-manager/` |
 
+Папка сохраняет имя исходного проекта намеренно: данные существующей установки
+находятся после перехода на 噜噜指纹浏览器.
+
 Берегите всю папку: `profiles.db`, данные браузера, резервные копии и
 `secret.key`. При первой установке создаётся ключ шифрования; без него
 зашифрованные пароли прокси могут стать недоступны. Переустановка программы и
@@ -125,8 +128,8 @@ Trash не очищается автоматически; после восст�
 Установите [uv](https://docs.astral.sh/uv/) и Node.js 20.9+. Python установит uv.
 
 ```bash
-git clone https://github.com/polyackiy/camoufox-profile-manager.git
-cd camoufox-profile-manager
+git clone https://github.com/ConcertoNotes/Fingerprint-Browser.git
+cd Fingerprint-Browser
 uv sync --extra desktop
 uv run python scripts/build_webui.py
 uv run python -m camoufox_pm.desktop

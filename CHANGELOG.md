@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> 噜噜指纹浏览器 is derived from Camoufox Profile Manager. Entries below the fork
+> describe the original project; their links point to its repository on purpose.
+> Changes made in this repository are listed under *Unreleased — 噜噜指纹浏览器*.
+
+## Unreleased — 噜噜指纹浏览器
+
+- Clash/Mihomo subscriptions, per-profile Mihomo routing with no direct fallback,
+  measured exit locations on an offline world map and IP-quality checks
+  (see `docs/network-architecture.md`).
+- Light interface; English is the default interface language.
+- New profiles default to the host's operating system. A foreign-OS fingerprint
+  made Camoufox register that system's whole font set at every start, which on
+  macOS could render browser text garbled and made the browser crawl.
+- Renamed to 噜噜指纹浏览器; in-app updates and project links point to
+  ConcertoNotes/Fingerprint-Browser.
+
 ## [Unreleased]
 
 ### Added

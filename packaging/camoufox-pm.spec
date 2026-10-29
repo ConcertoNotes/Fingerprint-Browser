@@ -1,4 +1,4 @@
-# PyInstaller spec for the Camoufox Profile Manager desktop app.
+# PyInstaller spec for the 噜噜指纹浏览器 desktop app (derived from Camoufox Profile Manager).
 #
 # Build (after `python scripts/build_webui.py`):
 #   pyinstaller packaging/camoufox-pm.spec --noconfirm --clean
@@ -113,11 +113,13 @@ coll = COLLECT(
 )
 app = BUNDLE(
     coll,
-    name="Camoufox Profile Manager.app",
+    name="噜噜指纹浏览器.app",
     icon=os.path.join(SPECPATH, "camoufox-pm.icns"),
-    bundle_identifier="com.github.polyackiy.camoufox-pm",
+    bundle_identifier="com.github.concertonotes.lulu-fingerprint-browser",
     info_plist={
         "NSHighResolutionCapable": True,
+        "CFBundleName": "噜噜指纹浏览器",
+        "CFBundleDisplayName": "噜噜指纹浏览器",
         "CFBundleShortVersionString": version("camoufox-profile-manager"),
     },
 )
