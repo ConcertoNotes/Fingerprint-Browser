@@ -22,11 +22,11 @@ type Point = PointFeature<{ key: string; count: number; tone: string }>
 type ClusterProps = { key: string; count: number; tone: string }
 
 const TONE_CLASS: Record<string, string> = {
-  ok: 'border-ok/70 bg-ok/20 text-ok',
-  warn: 'border-warn/70 bg-warn/20 text-warn',
-  danger: 'border-danger/70 bg-danger/20 text-danger',
-  unknown: 'border-line-strong bg-raised text-ink-dim',
-  cluster: 'border-signal/60 bg-signal-shade text-signal-soft',
+  ok: 'border-ok bg-[#e6f4ea] text-ok',
+  warn: 'border-warn bg-[#fff4d6] text-warn',
+  danger: 'border-danger bg-danger-shade text-danger',
+  unknown: 'border-line-strong bg-surface text-ink-dim',
+  cluster: 'border-signal bg-signal-shade text-signal-soft',
 }
 
 /**
@@ -73,9 +73,9 @@ export function WorldMap({ groups, selectedKey, onSelect, focusToken }: Props) {
             version: 8,
             sources: { countries: { type: 'geojson', data: countries as GeoJSON.FeatureCollection } },
             layers: [
-              { id: 'sea', type: 'background', paint: { 'background-color': '#0b0c0e' } },
-              { id: 'land', type: 'fill', source: 'countries', paint: { 'fill-color': '#17191d' } },
-              { id: 'borders', type: 'line', source: 'countries', paint: { 'line-color': '#2b2e35', 'line-width': 0.6 } },
+              { id: 'sea', type: 'background', paint: { 'background-color': '#d3e1ee' } },
+              { id: 'land', type: 'fill', source: 'countries', paint: { 'fill-color': '#fbfcfd' } },
+              { id: 'borders', type: 'line', source: 'countries', paint: { 'line-color': '#b9c3cf', 'line-width': 0.7 } },
             ],
           },
           center: [100, 25],
@@ -113,7 +113,7 @@ export function WorldMap({ groups, selectedKey, onSelect, focusToken }: Props) {
     element.type = 'button'
     const size = Math.min(44, (cluster ? 26 : 20) + Math.round(Math.log2(count + 1) * 4))
     element.style.width = element.style.height = `${size}px`
-    element.className = `flex items-center justify-center rounded-full border font-mono text-[11px] font-semibold shadow-[0_0_0_3px_rgb(11_12_14/0.7)] transition-transform hover:scale-110 focus-visible:scale-110 ${TONE_CLASS[cluster ? 'cluster' : tone]}`
+    element.className = `flex items-center justify-center rounded-full border font-mono text-[11px] font-semibold shadow-[0_0_0_3px_rgb(255_255_255/0.9),0_1px_4px_rgb(27_31_36/0.25)] transition-transform hover:scale-110 focus-visible:scale-110 ${TONE_CLASS[cluster ? 'cluster' : tone]}`
     element.textContent = String(count)
     element.setAttribute('aria-label', label)
     element.title = label

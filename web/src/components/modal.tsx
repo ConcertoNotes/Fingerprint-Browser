@@ -94,7 +94,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
 
   return (
     <div
-      className="overlay-in fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-6 backdrop-blur-[2px]"
+      className="overlay-in fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-6 backdrop-blur-[2px]"
       onMouseDown={(event) => {
         // Only a click that starts on the backdrop closes; a drag out of a text
         // field must not dismiss the dialog.

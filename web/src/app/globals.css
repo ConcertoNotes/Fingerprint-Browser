@@ -1,37 +1,38 @@
 @import "tailwindcss";
 
 /*
- * Camoufox Profile Manager — "instrument panel".
+ * Camoufox Profile Manager — "instrument panel", light.
  *
- * A dense control surface: near-black canvas, hairline rules instead of boxes,
+ * A dense control surface: paper-light canvas, hairline rules instead of boxes,
  * monospace for machine values, and a single signal colour (orange) reserved
  * for the primary action and the running state. Everything else is greyscale so
- * a running browser is the only thing that draws the eye.
+ * a running browser is the only thing that draws the eye. Status colours are
+ * darkened from their usual hues so text keeps at least 4.5:1 on white.
  *
  * Fonts are bundled from pinned Fontsource packages (see fonts.css) for offline use.
  */
 
 @theme {
-  --color-canvas: #0b0c0e;
-  --color-surface: #121316;
-  --color-raised: #191a1f;
-  --color-line: #232529;
-  --color-line-strong: #313540;
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-raised: #eef0f3;
+  --color-line: #e1e4e9;
+  --color-line-strong: #c8cdd5;
 
-  --color-ink: #e8e9eb;
-  --color-ink-dim: #9195a0;
-  --color-ink-faint: #6a6e78;
+  --color-ink: #1b1f24;
+  --color-ink-dim: #535c67;
+  --color-ink-faint: #6b7380;
 
-  --color-signal: #ff6b35;
-  --color-signal-soft: #ff8a5c;
-  --color-signal-shade: #3a1c10;
+  --color-signal: #c2410c;
+  --color-signal-soft: #9a3412;
+  --color-signal-shade: #ffedd5;
 
-  --color-danger: #f2555a;
-  --color-danger-shade: #3a1418;
+  --color-danger: #c62828;
+  --color-danger-shade: #fdecea;
   /* Detectable-but-not-fatal. Distinct from --color-signal, which means "this is
      the primary action" or "this profile is running" and nothing else. */
-  --color-warn: #d8a13a;
-  --color-ok: #3fb950;
+  --color-warn: #8a5a00;
+  --color-ok: #1a7f37;
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
@@ -50,6 +51,11 @@
   html,
   body {
     height: 100%;
+  }
+
+  /* Native controls, scrollbars and form popups follow the light palette. */
+  html {
+    color-scheme: light;
   }
 
   body {
@@ -190,7 +196,7 @@
   /* The only saturated element on the page. */
   .btn-primary {
     background: var(--color-signal);
-    color: #1a0d06;
+    color: #ffffff;
     font-weight: 600;
   }
 
@@ -289,11 +295,11 @@
     0%,
     100% {
       opacity: 1;
-      box-shadow: 0 0 0 0 rgb(255 107 53 / 0.5);
+      box-shadow: 0 0 0 0 rgb(194 65 12 / 0.45);
     }
     50% {
       opacity: 0.75;
-      box-shadow: 0 0 0 3px rgb(255 107 53 / 0);
+      box-shadow: 0 0 0 3px rgb(194 65 12 / 0);
     }
   }
 
