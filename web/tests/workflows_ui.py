@@ -29,6 +29,11 @@ class WorkflowsUI(StageThreeUI):
         self.context = self.browser.new_context(
             locale=self.ui_locale, viewport={"width": 1280, "height": 900}
         )
+        # English is the default; these tests act as a user who chose this language.
+        self.context.add_init_script(
+            "try { if (!localStorage.getItem('camoufox-pm.ui-language')) "
+            f"localStorage.setItem('camoufox-pm.ui-language', '{self.ui_locale}') }} catch (error) {{}}"
+        )
         self.page = self.context.new_page()
         self.page.set_default_timeout(8000)
         self.page.route("**/api/v1/**", self.route)

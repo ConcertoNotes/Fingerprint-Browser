@@ -23,13 +23,11 @@ export function translate(locale: Locale, message: string, values: TranslationVa
   )
 }
 
-export function resolveLocale(saved: string | null, languages: readonly string[]): Locale {
+/**
+ * The interface starts in English; a language chosen in the selector is kept.
+ * Browser language preferences are deliberately not followed.
+ */
+export function resolveLocale(saved: string | null): Locale {
   if (saved === 'en' || saved === 'ru' || saved === 'zh-CN') return saved
-  // Use the first supported language in the user's preference order.
-  for (const language of languages) {
-    if (/^zh(?:-|$)/i.test(language)) return 'zh-CN'
-    if (/^ru(?:-|$)/i.test(language)) return 'ru'
-    if (/^en(?:-|$)/i.test(language)) return 'en'
-  }
   return 'en'
 }

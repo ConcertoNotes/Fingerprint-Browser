@@ -70,7 +70,7 @@ class DesktopUI(unittest.TestCase):
         self.network_nodes = []
         self.network_map = {"features": {"type": "FeatureCollection", "features": []}, "unknown_location": [], "unknown_location_count": 0, "checked_count": 0, "total_nodes": 0}
         self.network_status = {"engine": {"available": False, "code": "binary_missing", "message": "Mihomo is not installed. Set its path in Settings → Network, or run scripts/prepare_mihomo.py."}, "geoip": {"available": True, "name": "geoip-combined.mmdb", "size": 1, "modified_at": 1790000000}, "encryption_available": True, "active_runtimes": 0, "settings": {"mihomo_path": None, "probe_concurrency": 8, "probe_timeout_seconds": 10, "intel_cache_hours": 24, "intel_ipinfo_enabled": True, "intel_ippure_enabled": True, "intel_scamalytics_enabled": False, "mask_exit_ips": False, "has_intel_ipinfo_token": False, "has_intel_scamalytics_url": False, "has_intel_scamalytics_key": False}}
-        self.config = {"version": "0.5.0", "host": "127.0.0.1", "port": 8000, "database_path": "/local/profiles.db", "api_key_set": False, "user_auth_enabled": False, "encryption_enabled": True, "cors_origins": [], "camoufox_available": True, "uptime_seconds": 60}
+        self.config = {"version": "0.5.0", "host": "127.0.0.1", "port": 8000, "database_path": "/local/profiles.db", "api_key_set": False, "user_auth_enabled": False, "encryption_enabled": True, "cors_origins": [], "camoufox_available": True, "uptime_seconds": 60, "host_os": "windows"}
         self.page.route("**/api/v1/**", self.route)
 
     def tearDown(self):
@@ -136,13 +136,13 @@ class DesktopUI(unittest.TestCase):
             self.update_recovery = {**self.update_recovery, "state": "cancelled", "maintenance_active": False, "can_cancel": False}
             data = self.update_recovery
         elif path == "/system/updates?channel=preview":
-            data, envelope = {"current_version": "0.6.0rc1", "latest_version": "0.6.0-rc.2", "available": True, "release_url": "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0-rc.2", "assets": []}, True
+            data, envelope = {"current_version": "0.6.0rc1", "latest_version": "0.6.0-rc.2", "available": True, "release_url": "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0-rc.2", "assets": []}, True
         elif path == "/system/updates/prepare?channel=preview":
-            data, envelope = {"release_url": "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0-rc.2", "backup_count": 1, "message": "Ready"}, True
+            data, envelope = {"release_url": "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0-rc.2", "backup_count": 1, "message": "Ready"}, True
         elif path == "/system/updates":
-            data, envelope = {"current_version": "0.5.0", "latest_version": "0.6.0", "available": True, "release_url": "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0", "assets": []}, True
+            data, envelope = {"current_version": "0.5.0", "latest_version": "0.6.0", "available": True, "release_url": "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0", "assets": []}, True
         elif path == "/system/updates/prepare":
-            data, envelope = {"release_url": "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0", "backup_count": 1, "message": "1 backup created. Release ready."}, True
+            data, envelope = {"release_url": "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0", "backup_count": 1, "message": "1 backup created. Release ready."}, True
         elif path == "/system/backups":
             data, envelope = {"backups": self.backups}, True
         elif path.startswith("/system/backups/") and path.endswith("/restore"):
@@ -237,7 +237,7 @@ class DesktopUI(unittest.TestCase):
         expect(self.page.get_by_text("Version 0.6.0 is available. You have 0.5.0.")).to_be_visible()
         expect(self.page.get_by_role("link", name="Open release downloads")).not_to_be_visible()
         self.page.get_by_role("button", name="Back up and prepare update").click()
-        expect(self.page.get_by_role("link", name="Open release downloads")).to_have_attribute("href", "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0")
+        expect(self.page.get_by_role("link", name="Open release downloads")).to_have_attribute("href", "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0")
         self.assertEqual(sum(path == "/system/updates/prepare" for _, path, _ in self.calls), 1)
 
     def test_backup_restore_creates_a_separate_profile(self):
@@ -258,7 +258,7 @@ class DesktopUI(unittest.TestCase):
         self.page.get_by_role("button", name="Check for updates", exact=True).click()
         expect(self.page.get_by_text("Version 0.6.0-rc.2 is available. You have 0.6.0rc1.")).to_be_visible()
         self.page.get_by_role("button", name="Back up and prepare update").click()
-        expect(self.page.get_by_role("link", name="Open release downloads")).to_have_attribute("href", "https://github.com/polyackiy/camoufox-profile-manager/releases/tag/v0.6.0-rc.2")
+        expect(self.page.get_by_role("link", name="Open release downloads")).to_have_attribute("href", "https://github.com/ConcertoNotes/Fingerprint-Browser/releases/tag/v0.6.0-rc.2")
         choice.uncheck()
         expect(self.page.get_by_role("link", name="Open release downloads")).not_to_be_visible()
 
@@ -439,6 +439,8 @@ class DesktopUI(unittest.TestCase):
     def test_chinese_ui_preserves_profile_settings_and_survives_reload(self):
         self.context.close()
         self.context = self.browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
+        # English is the default; this user picked Chinese on an earlier visit.
+        self.context.add_init_script("try { if (!localStorage.getItem('camoufox-pm.ui-language')) localStorage.setItem('camoufox-pm.ui-language', 'zh-CN') } catch (error) {}")
         self.page = self.context.new_page()
         self.page.set_default_timeout(8000)
         self.page.route("**/api/v1/**", self.route)
@@ -637,6 +639,32 @@ class DesktopUI(unittest.TestCase):
         self.page.get_by_label("用户名", exact=True).fill("user")
         expect(self.page.get_by_text("不支持 SOCKS4 凭据。需要认证时请使用 SOCKS5、HTTP 或 HTTPS 代理。", exact=True)).to_be_visible()
 
+
+    def test_interface_starts_in_english_even_for_a_chinese_browser(self):
+        self.context.close()
+        self.context = self.browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
+        self.page = self.context.new_page()
+        self.page.set_default_timeout(8000)
+        self.page.route("**/api/v1/**", self.route)
+        self.page.goto(self.origin)
+        expect(self.page.locator("html")).to_have_attribute("lang", "en")
+        expect(self.page.get_by_role("heading", name="Profiles", exact=True)).to_be_visible()
+
+    def test_new_profiles_default_to_the_host_os_and_warn_about_others(self):
+        self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}
+        self.config = {**self.config, "host_os": "macos"}
+        self.page.goto(self.origin)
+        self.page.get_by_role("button", name="New profile", exact=True).click()
+        expect(self.page.get_by_label("Operating system", exact=True)).to_have_value("macos")
+        warning = self.page.get_by_role("note").filter(has_text="whole font set")
+        expect(warning).to_have_count(0)
+        self.page.get_by_label("Operating system", exact=True).select_option("windows")
+        expect(warning).to_contain_text("This computer runs macOS")
+        self.page.get_by_label("Name", exact=True).fill("Cross-OS on purpose")
+        self.page.get_by_role("button", name="Create profile", exact=True).click()
+        expect(self.page.get_by_role("dialog")).not_to_be_visible()
+        saved = next(json.loads(body) for method, path, body in self.calls if method == "POST" and path == "/profiles")
+        self.assertEqual(saved["browser_settings"]["os"], "windows")
 
     def test_bound_profile_shows_its_node_and_measured_exit(self):
         self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}

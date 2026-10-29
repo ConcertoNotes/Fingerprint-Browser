@@ -1497,5 +1497,6 @@
   "missing uuid or token": "缺少 uuid 或 token",
   "entry is too large": "条目过大",
   "Provider says": "数据源归属地",
-  "Location sources disagree by about {km} km. IP geolocation is approximate; the map uses the local GeoIP point, the same one the browser uses for its timezone.": "各数据源的位置相差约 {km} km。IP 地理位置只是近似值；地图使用本地 GeoIP 坐标，也就是浏览器推导时区所用的同一位置。"
+  "Location sources disagree by about {km} km. IP geolocation is approximate; the map uses the local GeoIP point, the same one the browser uses for its timezone.": "各数据源的位置相差约 {km} km。IP 地理位置只是近似值；地图使用本地 GeoIP 坐标，也就是浏览器推导时区所用的同一位置。",
+  "This computer runs {host}. Pretending to be {os} makes the browser load that system's whole font set at every start: launches take several seconds longer and browser text can appear garbled while the fonts load. Prefer {host} unless you need {os}.": "本机是 {host}。模拟 {os} 会让浏览器每次启动都加载该系统的整套字体：启动会慢好几秒，字体加载期间浏览器里的文字可能显示为乱码。除非确实需要 {os}，建议使用 {host}。"
 }

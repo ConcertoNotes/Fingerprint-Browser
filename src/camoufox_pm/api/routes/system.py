@@ -26,6 +26,7 @@ from camoufox_pm.config import get_settings
 from camoufox_pm.core import fingerprint_store
 from camoufox_pm.core.browser_install import installed_browser
 from camoufox_pm.core.cleanup import ProfileCleanupManager
+from camoufox_pm.core.fingerprint_generator import host_os
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
@@ -223,6 +224,7 @@ async def get_system_config():
             cors_origins=settings.cors_origins,
             camoufox_available=installed_browser()[0],
             uptime_seconds=int(time.time() - startup_time),
+            host_os=host_os(),
         ),
     )
 
@@ -238,7 +240,7 @@ async def get_system_info():
     """Return basic information about the API."""
     return ApiResponse(
         success=True,
-        message="Camoufox Profile Manager API",
+        message="噜噜指纹浏览器 API",
         data=SystemInfoData(
             name="camoufox-profile-manager",
             version=__version__,

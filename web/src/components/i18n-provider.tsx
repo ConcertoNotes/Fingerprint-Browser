@@ -10,7 +10,7 @@ function getLocale(): Locale {
   if (selectedLocale) return selectedLocale
   let saved = null
   try { saved = window.localStorage.getItem(LANGUAGE_KEY) } catch { /* Embedded storage may be disabled. */ }
-  selectedLocale = resolveLocale(saved, navigator.languages)
+  selectedLocale = resolveLocale(saved)
   return selectedLocale
 }
 

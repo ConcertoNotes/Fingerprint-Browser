@@ -97,6 +97,9 @@ class SystemConfigData(BaseModel):
     cors_origins: list[str]
     camoufox_available: bool
     uptime_seconds: int
+    # windows, macos or linux. New profiles default to it: a fingerprint for
+    # another OS loads that system's whole font set and starts far slower.
+    host_os: str = "linux"
 
 
 class DevicePreset(BaseModel):

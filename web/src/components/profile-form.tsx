@@ -17,6 +17,8 @@ import {
   OS_LABELS,
   presetsAPI,
   profilesAPI,
+  systemAPI,
+  guessHostOs,
   type DevicePreset,
   type FingerprintSummary,
   type Group,
@@ -160,7 +162,15 @@ export function ProfileForm({ open, profile, groups, onClose, onSaved }: Props) 
   // somebody else made in the meantime is refused instead of being overwritten,
   // and moved on after a refused save so a deliberate second Save can proceed.
   const [baseVersion, setBaseVersion] = useState(0)
+  // The computer's own OS. New profiles start with it: another OS makes the
+  // browser load that system's whole font set at every start.
+  const [hostOs, setHostOs] = useState<'windows' | 'macos' | 'linux'>(guessHostOs)
   const toast = useToast()
+
+  useEffect(() => {
+    if (!open || !canManageAccess) return
+    systemAPI.config().then(config => { if (config.host_os) setHostOs(config.host_os) }).catch(() => {})
+  }, [open, canManageAccess])
 
   useEffect(() => {
     if (open) {
@@ -169,13 +179,22 @@ export function ProfileForm({ open, profile, groups, onClose, onSaved }: Props) 
       // away the loaded presets on every open and would not refill when the
       // same profile is reopened after a save changed it.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setForm(profile ? fromProfile(profile) : EMPTY)
+      setForm(profile ? fromProfile(profile) : { ...EMPTY, os: hostOs })
       setBaseVersion(profile?.row_version ?? 0)
       setMachine(profile?.fingerprint)
       setStoredGeography(profile ? hasGeography(profile) : false)
       setPresetId('')
     }
+    // hostOs only seeds a new form; changing it later must not reset typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, profile])
+
+  useEffect(() => {
+    // The server's answer can arrive after the dialog opened; adopt it while
+    // the user has not touched the OS of a new profile.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (open && !isEdit) setForm(current => (current.os === EMPTY.os || current.os === guessHostOs() ? { ...current, os: hostOs } : current))
+  }, [hostOs, open, isEdit])
 
   // Presets only matter while creating: an existing profile is already pinned.
   useEffect(() => {
@@ -523,6 +542,12 @@ export function ProfileForm({ open, profile, groups, onClose, onSaved }: Props) 
               <option value="macos">macOS</option>
               <option value="linux">Linux</option>
             </select>
+            {form.os !== hostOs && (
+              <p className="mt-1.5 flex items-start gap-1.5 text-warn" role="note">
+                <TriangleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+                {t('This computer runs {host}. Pretending to be {os} makes the browser load that system\'s whole font set at every start: launches take several seconds longer and browser text can appear garbled while the fonts load. Prefer {host} unless you need {os}.', { host: OS_LABELS[hostOs] ?? hostOs, os: OS_LABELS[form.os] ?? form.os })}
+              </p>
+            )}
             {/* Once a machine is pinned this setting is not what a page sees, so
                 the honest warning is stronger than "the rest stays as it was". */}
             {isEdit && form.os !== (profile.browser_settings?.os ?? 'windows') && (

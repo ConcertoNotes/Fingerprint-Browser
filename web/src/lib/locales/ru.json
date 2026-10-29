@@ -1632,5 +1632,6 @@
   "missing uuid or token": "отсутствует uuid или token",
   "entry is too large": "запись слишком большая",
   "Provider says": "По данным источника",
-  "Location sources disagree by about {km} km. IP geolocation is approximate; the map uses the local GeoIP point, the same one the browser uses for its timezone.": "Источники расходятся примерно на {km} км. Геолокация IP приблизительна; карта использует точку локальной GeoIP — ту же, по которой браузер определяет часовой пояс."
+  "Location sources disagree by about {km} km. IP geolocation is approximate; the map uses the local GeoIP point, the same one the browser uses for its timezone.": "Источники расходятся примерно на {km} км. Геолокация IP приблизительна; карта использует точку локальной GeoIP — ту же, по которой браузер определяет часовой пояс.",
+  "This computer runs {host}. Pretending to be {os} makes the browser load that system's whole font set at every start: launches take several seconds longer and browser text can appear garbled while the fonts load. Prefer {host} unless you need {os}.": "Этот компьютер работает на {host}. Имитация {os} заставляет браузер при каждом запуске загружать весь набор шрифтов этой системы: запуск занимает на несколько секунд больше, а пока шрифты загружаются, текст в браузере может отображаться искажённо. Выбирайте {host}, если {os} действительно не нужна."
 }

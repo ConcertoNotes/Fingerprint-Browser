@@ -7,9 +7,19 @@ hand-crafted here; doing so would break the fingerprint's internal consistency.
 """
 
 import random
+import sys
 from typing import Any
 
 from .models import BrowserSettings
+
+
+def host_os() -> str:
+    """This computer's OS in profile terms: windows, macos or linux."""
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "linux"
 
 
 class FingerprintGenerator:
@@ -90,7 +100,12 @@ class FingerprintGenerator:
         if isinstance(constraints, BrowserSettings):
             constraints = constraints.model_dump()
 
-        os_choice = (constraints or {}).get("os") or random.choice(["windows", "macos", "linux"])
+        # Unless asked otherwise, a new machine matches the host. A different OS
+        # makes Camoufox register that system's whole bundled font set at every
+        # start (measured on macOS: ~5.6 s instead of ~1.1 s), and while a cold
+        # registration runs, browser text can render garbled and the UI crawls.
+        # Native rendering also matches the fonts and canvas a page measures.
+        os_choice = (constraints or {}).get("os") or host_os()
         region = (constraints or {}).get("region")
 
         screen = random.choice(self.os_screen_combinations[os_choice])

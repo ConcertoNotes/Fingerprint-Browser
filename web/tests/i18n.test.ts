@@ -7,18 +7,12 @@ import { catalogs, resolveLocale, translate } from '../src/lib/i18n'
 
 const placeholders = (text: string) => [...new Set(text.match(/\{\w+\}/g) ?? [])].sort()
 
-test('saved UI language wins without changing browser language preferences', () => {
-  assert.equal(resolveLocale('en', ['zh-CN', 'en']), 'en')
-  assert.equal(resolveLocale('zh-CN', ['en-US']), 'zh-CN')
-  assert.equal(resolveLocale(null, ['zh-Hans-CN']), 'zh-CN')
-  assert.equal(resolveLocale(null, ['en-GB', 'zh-CN']), 'en')
-  assert.equal(resolveLocale('unsupported', ['fr', 'zh-CN']), 'zh-CN')
-  assert.equal(resolveLocale(null, ['de']), 'en')
-  assert.equal(resolveLocale(null, []), 'en')
-  assert.equal(resolveLocale('ru', ['zh-CN']), 'ru')
-  assert.equal(resolveLocale(null, ['ru-RU', 'en']), 'ru')
-  assert.equal(resolveLocale(null, ['en-GB', 'ru']), 'en')
-  assert.equal(resolveLocale('unsupported', ['fr', 'ru-KZ']), 'ru')
+test('the interface defaults to English and keeps a saved choice', () => {
+  assert.equal(resolveLocale('en'), 'en')
+  assert.equal(resolveLocale('zh-CN'), 'zh-CN')
+  assert.equal(resolveLocale('ru'), 'ru')
+  assert.equal(resolveLocale(null), 'en')
+  assert.equal(resolveLocale('unsupported'), 'en')
 })
 
 test('English and unknown diagnostics fall back to their original text', () => {

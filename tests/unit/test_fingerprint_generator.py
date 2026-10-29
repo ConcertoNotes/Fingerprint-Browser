@@ -67,3 +67,20 @@ async def test_rotating_a_fingerprint_does_not_move_the_profile():
     assert rotated.os == "macos"
     assert rotated.timezone is None
     assert rotated.geolocation is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "platform, expected", [("darwin", "macos"), ("win32", "windows"), ("linux", "linux")]
+)
+async def test_new_machines_match_the_host_unless_another_os_is_asked_for(
+    monkeypatch, platform, expected
+):
+    """A foreign OS loads that system's whole font set at every start; on macOS a
+    cold start rendered garbled browser text and crawled. Only ask for it on purpose."""
+    from camoufox_pm.core import fingerprint_generator
+
+    monkeypatch.setattr(fingerprint_generator.sys, "platform", platform)
+    generator = fingerprint_generator.FingerprintGenerator()
+    assert {(await generator.generate_fingerprint()).os for _ in range(10)} == {expected}
+    assert (await generator.generate_fingerprint({"os": "windows"})).os == "windows"

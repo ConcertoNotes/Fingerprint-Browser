@@ -1,7 +1,7 @@
 import { translate, type Locale, type Translator } from './i18n'
 import { translateProxyDiagnostic } from './diagnostics'
 
-// API client for the Camoufox Profile Manager backend.
+// API client for the 噜噜指纹浏览器 backend.
 //
 // The UI is served by the API on the same origin, so the base URL is empty by
 // default; NEXT_PUBLIC_API_URL overrides it for split deployments.
@@ -631,6 +631,16 @@ export interface SystemConfig {
   cors_origins: string[]
   camoufox_available: boolean
   uptime_seconds: number
+  /** windows, macos or linux: the OS of the computer running the manager. */
+  host_os?: 'windows' | 'macos' | 'linux'
+}
+
+/** Best guess from this browser when the server does not say (non-admin users). */
+export function guessHostOs(): 'windows' | 'macos' | 'linux' {
+  const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform} ${navigator.userAgent}`
+  if (/Mac/i.test(platform)) return 'macos'
+  if (/Win/i.test(platform)) return 'windows'
+  return 'linux'
 }
 
 export interface BrowserReadiness {
