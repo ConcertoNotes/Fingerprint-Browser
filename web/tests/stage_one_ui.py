@@ -64,6 +64,12 @@ class DesktopUI(unittest.TestCase):
         self.update_recovery = {"state": "idle", "maintenance_active": False, "automatic_install_available": False, "can_cancel": False}
         self.update_action_failure = False
         self.trash = []
+        # Subscription nodes and bindings (web/src/lib/network-api.ts). Empty and
+        # engine-less by default, as on a fresh install.
+        self.network_bindings = []
+        self.network_nodes = []
+        self.network_map = {"features": {"type": "FeatureCollection", "features": []}, "unknown_location": [], "unknown_location_count": 0, "checked_count": 0, "total_nodes": 0}
+        self.network_status = {"engine": {"available": False, "code": "binary_missing", "message": "Mihomo is not installed. Set its path in Settings → Network, or run scripts/prepare_mihomo.py."}, "geoip": {"available": True, "name": "geoip-combined.mmdb", "size": 1, "modified_at": 1790000000}, "encryption_available": True, "active_runtimes": 0, "settings": {"mihomo_path": None, "probe_concurrency": 8, "probe_timeout_seconds": 10, "intel_cache_hours": 24, "intel_ipinfo_enabled": True, "intel_ippure_enabled": True, "intel_scamalytics_enabled": False, "mask_exit_ips": False, "has_intel_ipinfo_token": False, "has_intel_scamalytics_url": False, "has_intel_scamalytics_key": False}}
         self.config = {"version": "0.5.0", "host": "127.0.0.1", "port": 8000, "database_path": "/local/profiles.db", "api_key_set": False, "user_auth_enabled": False, "encryption_enabled": True, "cors_origins": [], "camoufox_available": True, "uptime_seconds": 60}
         self.page.route("**/api/v1/**", self.route)
 
@@ -182,6 +188,14 @@ class DesktopUI(unittest.TestCase):
             proxy = {**self.library[0], "id": "imported", "name": "Imported proxy", "server": "imported.example:8080"}
             self.library.append(proxy)
             data, envelope = {"created": [proxy], "skipped": [{"line": 2, "reason": "Proxy already exists"}]}, True
+        elif path == "/network/bindings":
+            data, envelope = {"bindings": self.network_bindings}, True
+        elif path == "/network/status":
+            data, envelope = self.network_status, True
+        elif path == "/network/map":
+            data, envelope = self.network_map, True
+        elif path.startswith("/network/nodes?"):
+            data, envelope = {"nodes": self.network_nodes, "total": len(self.network_nodes)}, True
         elif path == "/trash/profiles":
             data, envelope = {"profiles": self.trash}, True
         elif path.endswith("?confirm=true"):
@@ -622,6 +636,67 @@ class DesktopUI(unittest.TestCase):
         self.page.get_by_label("类型", exact=True).select_option("socks4")
         self.page.get_by_label("用户名", exact=True).fill("user")
         expect(self.page.get_by_text("不支持 SOCKS4 凭据。需要认证时请使用 SOCKS5、HTTP 或 HTTPS 代理。", exact=True)).to_be_visible()
+
+
+    def test_bound_profile_shows_its_node_and_measured_exit(self):
+        self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}
+        self.profiles = [{"id": "bound", "name": "Bound", "status": "active", "browser_settings": {"os": "windows", "screen": "1920x1080"}, "proxy_config": {"type": "http", "server": "manual.example:8080"}, "created_at": "2026-01-01T00:00:00Z", "row_version": 0}]
+        node = network_node("n-tokyo", "Tokyo 01")
+        self.network_bindings = [{"profile_id": "bound", "node_id": "n-tokyo", "row_version": 0, "bound_at": "2026-10-29T00:00:00Z", "node": node, "usable": True,
+                                  "runtime": {"profile_id": "bound", "state": "stopped", "adapter_kind": "mihomo", "node_id": "n-tokyo", "exit_ip": None, "error": None}}]
+        self.page.goto(self.origin)
+        expect(self.page.get_by_text("Tokyo 01")).to_be_visible()
+        expect(self.page.get_by_text("203.0.113.21")).to_be_visible()
+        expect(self.page.get_by_role("link", name="Change node")).to_have_attribute("href", "/map/?profile=bound")
+        # The manual proxy is shown as replaced, not as the active route.
+        expect(self.page.get_by_title("The bound node replaces this manual proxy")).to_have_text("http://manual.example:8080")
+
+    def test_settings_explain_a_missing_engine(self):
+        self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}
+        self.page.goto(f"{self.origin}/settings/")
+        expect(self.page.get_by_text("Mihomo is not available", exact=True)).to_be_visible()
+        expect(self.page.get_by_text("scripts/prepare_mihomo.py", exact=False).first).to_be_visible()
+        self.assertFalse(any(method != "GET" and path.startswith("/network") for method, path, _ in self.calls))
+
+    def test_map_lists_every_node_at_shared_coordinates(self):
+        self.browser_state = {**self.browser_state, "installed": True, "state": "ready", "version": "135"}
+        nodes = [network_node("n-a", "Tokyo A"), network_node("n-b", "Tokyo B", latency_ms=300)]
+        self.network_nodes = nodes
+        self.network_map = {
+            "features": {"type": "FeatureCollection", "features": [
+                {"type": "Feature", "id": node["id"], "geometry": {"type": "Point", "coordinates": [139.69, 35.69]},
+                 "properties": {"node_id": node["id"], "label": node["name"], "subscription_name": "Airport", "protocol": "trojan", "status": "active",
+                                "country_iso": "JP", "city": None, "region": None, "precision": "coordinates", "location_source": "geoip",
+                                "timezone": "Asia/Tokyo", "health": "ok", "latency_ms": node["check"]["latency_ms"], "exit_ip": "203.0.113.21",
+                                "checked_at": "2026-10-29T00:00:00Z", "stale": False, "profile_count": 0, "shared_exit_count": 2,
+                                "purity_score": None, "risk_score": None, "grade": None}}
+                for node in nodes]},
+            "unknown_location": [], "unknown_location_count": 0, "checked_count": 2, "total_nodes": 2,
+        }
+        self.page.goto(f"{self.origin}/map/")
+        # The keyboard-accessible location list works with or without WebGL.
+        location = self.page.get_by_role("complementary", name="Node details").get_by_role("button", name="Japan", exact=False)
+        expect(location).to_contain_text("2/2 up")
+        location.click()
+        details = self.page.get_by_role("complementary", name="Node details")
+        expect(details.get_by_text("2 nodes at these coordinates")).to_be_visible()
+        expect(details.get_by_text("Tokyo A", exact=True)).to_be_visible()
+        expect(details.get_by_text("Tokyo B", exact=True)).to_be_visible()
+        expect(details.get_by_text("Shared by 2 nodes", exact=False)).to_be_visible()
+        # Nothing was checked or bound behind the user's back.
+        self.assertFalse(any(method != "GET" for method, path, _ in self.calls if path.startswith("/network")))
+
+def network_node(node_id, name, exit_ip="203.0.113.21", **check):
+    """A measured node as /network/nodes returns it; no secrets exist in this shape."""
+    return {
+        "id": node_id, "subscription_id": "sub", "subscription_name": "Airport", "name": name, "protocol": "trojan",
+        "entry": "entry.example:443", "status": "active", "invalid_reason": None, "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z", "retired_at": None, "profile_count": 0, "shared_exit_count": 2,
+        "check": {"health": "ok", "exit_ip": exit_ip, "country_iso": "JP", "city": None, "region": None, "latitude": 35.69,
+                  "longitude": 139.69, "timezone": "Asia/Tokyo", "precision": "coordinates", "location_source": "geoip",
+                  "latency_ms": 120, "error_code": None, "error": None, "checked_at": "2026-10-29T00:00:00Z", "stale": False, **check},
+        "intel": None, "intel_checked_at": None,
+    }
 
 
 if __name__ == "__main__":
