@@ -7,7 +7,85 @@ New versions must add an explicit numbered migration before increasing CURRENT.
 
 import sqlite3
 
-CURRENT_SCHEMA = 5
+CURRENT_SCHEMA = 6
+
+# Subscription nodes, their measured exits and per-profile bindings. Secrets
+# (subscription URLs, node configurations, provider keys) are stored sealed.
+# A binding references a node that is retired rather than deleted, so a
+# refreshed subscription can never silently move a profile onto another exit.
+NETWORK_TABLES = (
+    """CREATE TABLE IF NOT EXISTS network_subscriptions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('url','file')),
+        source_url_enc TEXT,
+        source_host TEXT,
+        source_file_name TEXT,
+        status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','syncing','ok','error')),
+        last_synced_at TEXT,
+        last_error_code TEXT,
+        last_error TEXT,
+        usage TEXT,
+        revision INTEGER NOT NULL DEFAULT 0,
+        row_version BIGINT NOT NULL DEFAULT 0,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS network_nodes (
+        id TEXT PRIMARY KEY,
+        subscription_id TEXT NOT NULL REFERENCES network_subscriptions(id) ON DELETE CASCADE,
+        node_key TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        entry TEXT NOT NULL,
+        config_enc TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','retired','invalid')),
+        invalid_reason TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        retired_at TEXT
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_network_nodes_source_key "
+    "ON network_nodes(subscription_id, node_key)",
+    """CREATE TABLE IF NOT EXISTS network_node_checks (
+        node_id TEXT PRIMARY KEY REFERENCES network_nodes(id) ON DELETE CASCADE,
+        health TEXT NOT NULL DEFAULT 'unknown' CHECK(health IN ('unknown','ok','error')),
+        exit_ip TEXT,
+        country_iso TEXT,
+        city TEXT,
+        region TEXT,
+        latitude REAL,
+        longitude REAL,
+        timezone TEXT,
+        precision TEXT NOT NULL DEFAULT 'unknown'
+            CHECK(precision IN ('unknown','country','coordinates','city')),
+        location_source TEXT,
+        latency_ms INTEGER,
+        error_code TEXT,
+        error TEXT,
+        checked_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_network_checks_exit_ip ON network_node_checks(exit_ip)",
+    """CREATE TABLE IF NOT EXISTS network_ip_intel (
+        ip TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        checked_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS profile_network_bindings (
+        profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+        node_id TEXT NOT NULL REFERENCES network_nodes(id) ON DELETE RESTRICT,
+        row_version BIGINT NOT NULL DEFAULT 0,
+        bound_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_profile_binding_node ON profile_network_bindings(node_id)",
+    """CREATE TABLE IF NOT EXISTS network_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+)
 
 
 def check_schema(connection: sqlite3.Connection) -> int:
@@ -99,3 +177,15 @@ def complete_migration(connection: sqlite3.Connection) -> None:
                 "CREATE TABLE IF NOT EXISTS workflow_receipts (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE)"
             )
             connection.execute("PRAGMA user_version = 5")
+
+    if current < 6:
+        # A pre-network manager would launch a bound profile with its stale
+        # manual proxy (or none), so it must refuse this database instead.
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in NETWORK_TABLES:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 1)"
+            )
+            connection.execute("PRAGMA user_version = 6")

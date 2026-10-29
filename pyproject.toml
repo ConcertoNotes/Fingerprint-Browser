@@ -36,6 +36,8 @@ dependencies = [
     # argon2id password hashing for user accounts (OWASP first choice; memory-hard,
     # unlike bcrypt, and without bcrypt's 72-byte input truncation).
     "argon2-cffi>=23.1",
+    # Clash/Mihomo subscription YAML; parsed only with the safe loader.
+    "pyyaml>=6.0",
     "loguru>=0.7",
     "psutil>=6.1",
     # socks so a SOCKS5 proxy can be checked, not only HTTP ones.
@@ -136,6 +138,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "browser: real Camoufox launch (opt-in, slow, requires 'camoufox fetch')",
+    "mihomo: real Mihomo engine (scripts/prepare_mihomo.py or CPM_MIHOMO_PATH); fails, never skips, without one",
 ]
 
 [tool.mypy]
