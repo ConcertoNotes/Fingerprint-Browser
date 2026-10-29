@@ -261,6 +261,70 @@ Across machines it needs a filesystem whose locking SQLite can trust — which
 rules out most NFS and SMB mounts, where a lease may be read as free while
 another host holds it.
 
+## Subscriptions, exit map and node binding (unreleased)
+
+Import Clash/Mihomo subscriptions, measure where each node **really** comes out,
+see the exits on an offline world map and bind a node to a profile. Each running
+bound profile gets its own Mihomo process and its own authenticated loopback
+listener; nothing uses a shared selector, so changing one profile's node never
+re-routes another. Details: [architecture](docs/network-architecture.md) ·
+[API](docs/network-api.md) · [test report](docs/network-test-report.md).
+
+**1. Install Mihomo (1.18+).** The manager refuses setuid/setgid or shared-writable
+binaries. Desktop clients often ship a setuid-root sidecar, so install a normal copy:
+
+```bash
+uv run python scripts/prepare_mihomo.py --from "/path/to/mihomo"
+# or download an official release and verify it against a hash you trust:
+uv run python scripts/prepare_mihomo.py --url https://github.com/MetaCubeX/mihomo/releases/download/<ver>/<asset>.gz --sha256 <hash>
+```
+
+Source checkouts find `.cache/mihomo/mihomo` automatically; otherwise set
+`CPM_MIHOMO_PATH` or the path in **Settings → Network nodes and map**, which also
+reports the engine version and GeoIP database. The GeoIP database is the one the
+browser installer already downloads.
+
+**2. Import.** **Proxy subscriptions → Add subscription URL** (HTTPS, fetched with
+`User-Agent: clash.meta/v1.18.0`) or **Import file** / paste YAML. Only the
+`proxies` list is used; provider rules, DNS, TUN and controller settings are ignored.
+Base64/share-link lists and provider-only files are refused with an explanation.
+An encryption key is required: subscription links and node secrets are stored
+sealed and never shown again.
+
+**3. Check and map.** **Check unmeasured** runs one temporary Mihomo for the whole
+batch. Exits are measured through each node and placed with the local GeoIP
+database — never from the entry server, the node name or its flag; nodes that
+cannot be placed stay under *Not located*. Clicking a location lists every node
+at those coordinates. **Check exit and quality** on one node also asks ipinfo.io
+and IPPure (and Scamalytics with your own API key) *through that node* and shows
+a purity score with every input. IPIP.la has no public API: start the profile and
+open it from the node panel, inside that profile's browser.
+
+**4. Bind and launch.** Select a stopped profile on the left, then **Bind**. The
+binding replaces the profile's own proxy from its next launch (a running profile
+is refused, never hot-switched). The launch starts the engine, verifies the exit
+through it and only then starts the browser; Camoufox derives timezone, location
+and WebRTC from that exit. If the node or engine fails, the launch stops — or,
+while running, connections fail (the profile is marked *degraded*; **Reconnect**
+restarts the same node). There is no fallback to a direct connection, the system
+proxy or another node.
+
+**Troubleshooting**
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `binary_setuid` / `binary_writable` | Run `scripts/prepare_mihomo.py --from <path>` and use the copy |
+| `secrets_unavailable` | Restore `secret.key` or set `CPM_SECRET_KEY` |
+| `blocked_address` on import | The URL (or a redirect) resolves to a private/local address |
+| `base64_unsupported` / `uri_list_unsupported` | Choose the Clash/Mihomo format in the provider panel |
+| Launch `502 node_unreachable` | The node is down; check it on the map or bind another |
+| Launch `422 node_retired` | The subscription no longer lists that node; bind another |
+| Many nodes, one exit IP | Shown as *shared by N*: different nodes are not different public IPs |
+| Sources disagree on the city | IP geolocation is approximate; the map uses the same GeoIP point as the browser |
+
+Loopback listeners are not an isolation boundary against untrusted local software,
+and nothing here prevents a site or provider from correlating accounts by other means.
+
 ## Documentation
 
 | Document | What it covers |
@@ -269,6 +333,8 @@ another host holds it.
 | [docs/automation.md](docs/automation.md) | Unreleased reusable workflows, scheduling and safe cancellation |
 | [docs/cli.md](docs/cli.md) | Every command and flag |
 | [docs/api.md](docs/api.md) | The REST API, endpoint by endpoint |
+| [docs/network-architecture.md](docs/network-architecture.md) | Subscriptions, Mihomo runtimes, exit checks, IP quality and the map |
+| [docs/network-api.md](docs/network-api.md) | The `/api/v1/network` endpoints |
 | [docs/profile-settings.md](docs/profile-settings.md) | What each setting does, how the pinned machine works, and what Camoufox cannot do |
 | [docs/scheduling.md](docs/scheduling.md) | Scheduled launches and browser refresh, and why hardware rotation is not offered |
 | [docs/excel.md](docs/excel.md) | Bulk import and export |
