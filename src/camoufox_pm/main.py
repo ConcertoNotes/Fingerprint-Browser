@@ -1,6 +1,7 @@
 """Camoufox Profile Manager REST API."""
 
 import asyncio
+import mimetypes
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from camoufox_pm.api.routes import (
     cookies,
     extensions,
     groups,
+    network,
     profiles,
     proxies,
     recovery,
@@ -136,6 +138,9 @@ async def lifespan(app: FastAPI):
                     await profile_manager.browser_sessions.close_all()
                 except Exception as exc:
                     logger.warning(f"Failed to close browsers on shutdown: {exc}")
+                # Probe pools and any engine whose browser is already gone.
+                await profile_manager.network_probe.shutdown()
+                await profile_manager.network.shutdown()
                 await profile_manager.release_all_leases()
         finally:
             sync.set_sync_runtime_factory(None)
@@ -245,6 +250,7 @@ for _prefix, _in_schema in (("/api/v1", True), ("/api", False)):
         (extensions.router, "Extensions"),
         (templates.router, "Templates"),
         (saved_filters.router, "Saved views"),
+        (network.router, "Network"),
     ):
         app.include_router(
             _router,
@@ -312,6 +318,9 @@ def _webui_dir() -> Path | None:
 # otherwise redirect the root to the API docs. Mounted last so /api and /health
 # and /docs take precedence over the catch-all static mount.
 _webui = _webui_dir()
+# The map's module worker must be served as JavaScript; some platforms' MIME
+# tables (older Pythons, Windows registry entries) do not know ``.mjs``.
+mimetypes.add_type("text/javascript", ".mjs")
 if _webui is not None:
     app.mount("/", StaticFiles(directory=str(_webui), html=True), name="webui")
     logger.info(f"Serving web UI from {_webui}")

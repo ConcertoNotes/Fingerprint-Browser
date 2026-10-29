@@ -350,7 +350,9 @@ async def _read_exit_address(
 
 
 async def resolve_exit_ip(
-    proxy: ProxyConfig | None, timeout: float = DEFAULT_TIMEOUT
+    proxy: ProxyConfig | None,
+    timeout: float = DEFAULT_TIMEOUT,
+    endpoints: tuple[str, ...] | None = None,
 ) -> tuple[str, int]:
     """Ask, through the proxy, what address the internet sees. Returns (ip, ms).
 
@@ -389,7 +391,8 @@ async def resolve_exit_ip(
         # never adopted, and finally the optional session-owned SOCKS4 relay.
         stack.push_async_callback(_close_owned_streams, streams)
         client = await stack.enter_async_context(httpx.AsyncClient(proxy=url, timeout=timeout))
-        for endpoint in IP_ENDPOINTS:
+        # Read at call time so the module-level list stays the single default.
+        for endpoint in endpoints or IP_ENDPOINTS:
             started = time.monotonic()
             try:
                 # httpcore's SOCKS negotiation has no read timeout in 1.0.9.

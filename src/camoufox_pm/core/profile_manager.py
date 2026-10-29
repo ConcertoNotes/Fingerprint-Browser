@@ -25,6 +25,8 @@ from .models import (
     generate_profile_id,
     normalize_tags,
 )
+from .network_adapter import NetworkAdapter
+from .network_probe import NetworkProbe
 from .profile_operations import profile_data_path, profile_operation, run_file_operation
 from .sync_guard import guard_profile, sync_mutation, sync_mutation_guard
 
@@ -44,6 +46,9 @@ class ProfileManager:
         self.lease_holder = make_lease_holder()
         self.browser_sessions = BrowserSessionManager(storage_manager, self.lease_holder)
         self.browser_sessions.on_stopped = self._on_browser_stopped
+        # Bound subscription nodes; profiles without a binding never touch it.
+        self.network = NetworkAdapter(self)
+        self.network_probe = NetworkProbe(self)
 
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized ProfileManager with data directory: {self.data_dir}")
@@ -52,6 +57,7 @@ class ProfileManager:
         """Initialize the profile manager and its database."""
         await self.storage.initialize()
         self.browser_sessions.start_heartbeat()
+        self.network.reap()
         logger.info("ProfileManager initialized")
 
     async def create_profile(
@@ -937,6 +943,7 @@ class ProfileManager:
         # On success it is deliberately kept: the session owns it until the
         # browser closes (or the process exits, where the API lifespan calls
         # release_all_leases).
+        network = None
         try:
             profile = await self.get_profile(profile_id)
             if not profile:
@@ -957,6 +964,14 @@ class ProfileManager:
                     "process_id": session.process_id,
                 }
 
+            # A bound node replaces the profile's own proxy for this launch. Its
+            # engine starts under this lease and its exit is measured through it
+            # before anything else happens; any failure stops the launch here,
+            # never falling back to the manual proxy or a direct connection.
+            network = await self.network.prepare(profile_id)
+            if network is not None:
+                await self.network.verify_exit(network, proxy_check.LAUNCH_TIMEOUT * 2)
+
             profile.storage_path = str(profile_data_path(self, profile))
             options = profile.to_camoufox_launch_options()
             options["headless"] = headless
@@ -968,6 +983,13 @@ class ProfileManager:
                 except ValueError:
                     logger.warning(f"Ignoring invalid window_size {window_size!r} (expected WxH)")
             options.update(kwargs)
+            effective_proxy = profile.proxy
+            if network is not None:
+                # After kwargs on purpose: an override must not bypass the binding.
+                options["proxy"] = network.browser_proxy
+                effective_proxy = network.proxy_config
+                if options.get("geoip") is True and network.exit_ip:
+                    options["geoip"] = network.exit_ip
 
             if profile.extensions:
                 options["addons"] = await run_file_operation(
@@ -1023,13 +1045,16 @@ class ProfileManager:
             # After the write on purpose: this only touches the launch options, so it
             # cannot clobber the row, and it is the first await that is allowed to run
             # between reading the profile and saving it.
-            await proxy_check.prepare_proxy_geoip(profile.proxy, options)
-            await proxy_check.fill_what_geoip_would_have(profile.proxy, options)
+            await proxy_check.prepare_proxy_geoip(effective_proxy, options)
+            await proxy_check.fill_what_geoip_would_have(effective_proxy, options)
 
+            # Unbound launches keep the original call shape exactly.
+            extra = {"network": network} if network is not None else {}
             session = await self.browser_sessions.launch(
                 profile_id,
                 options,
                 on_exit=self._on_browser_exit,
+                **extra,
             )
         except (Exception, asyncio.CancelledError):
             # CancelledError is a BaseException, not an Exception: an HTTP client
@@ -1042,6 +1067,13 @@ class ProfileManager:
             # very same lease, so releasing on this one's failure would unlock the
             # other one's live browser. Only a failure that leaves nothing running
             # may hand the lease back.
+            if network is not None:
+                owner = self.browser_sessions.active_sessions.get(profile_id)
+                if owner is None or owner.network is not network:
+                    try:
+                        await network.close()
+                    except Exception as exc:  # noqa: BLE001 - keep the original error
+                        logger.warning(f"Failed to stop the network for {profile_id}: {exc}")
             if not self.browser_sessions.is_live(profile_id):
                 await self._release_lease_quietly(profile_id)
             raise

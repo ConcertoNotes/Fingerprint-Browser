@@ -53,6 +53,7 @@ from camoufox_pm.core.database import StaleWriteError
 from camoufox_pm.core.excel_manager import ExcelManager
 from camoufox_pm.core.leases import ProfileLocked
 from camoufox_pm.core.models import BrowserSettings, ProfileStatus, ProxyConfig
+from camoufox_pm.core.network_adapter import NetworkLaunchError
 
 router = APIRouter()
 
@@ -431,6 +432,10 @@ async def launch_profile(profile_id: str, request: ProfileLaunchRequest):
             },
         )
 
+    except NetworkLaunchError as e:
+        # A bound node that cannot be used stops the launch with its own reason;
+        # nothing falls back to the manual proxy or a direct connection.
+        raise ApiError(e.status, str(e), e.code) from e
     except ProfileLocked as e:
         # Another instance holds the lease. A conflict, not a fault: the client
         # can retry once the holder closes the browser, and a 500 would read as

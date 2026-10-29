@@ -199,6 +199,7 @@ class BrowserSession:
         camoufox: Any,
         process_id: int | None = None,
         socks_relay: SocksRelay | None = None,
+        network: Any = None,
     ):
         self.profile_id = profile_id
         self.camoufox = camoufox  # AsyncCamoufox context manager instance
@@ -209,6 +210,9 @@ class BrowserSession:
         self.on_stopped: ExitHandler | None = None
         self._terminated = False
         self.socks_relay = socks_relay
+        # A bound node's private engine (core/network_adapter.py). Closed after
+        # the browser, so the browser never outlives the listener it points at.
+        self.network = network
         self._termination_task: asyncio.Task[None] | None = None
         self.context: Any = None
 
@@ -249,6 +253,12 @@ class BrowserSession:
                 pass
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Error killing process {self.process_id}: {exc}")
+
+        if self.network is not None:
+            try:
+                await self.network.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Error stopping the network for {self.profile_id}: {exc}")
 
         self._terminated = True
 
@@ -370,6 +380,7 @@ class BrowserSessionManager:
         profile_id: str,
         launch_options: dict[str, Any],
         on_exit: ExitHandler | None = None,
+        network: Any = None,
     ) -> BrowserSession:
         """Launch a Camoufox browser and register a monitored session."""
         if not CAMOUFOX_AVAILABLE:
@@ -422,18 +433,26 @@ class BrowserSessionManager:
                 raise BrowserLaunchError(f"Failed to launch browser: {exc}") from exc
 
             process_id = _resolve_process_id(browser) or _resolve_process_id(camoufox)
-            session = BrowserSession(profile_id, camoufox, process_id, socks_relay=relay)
+            session = BrowserSession(
+                profile_id, camoufox, process_id, socks_relay=relay, network=network
+            )
             # Expose the ready Playwright context; automation never reaches into
             # AsyncCamoufox internals or passes destination URLs at startup.
             session.context = browser
             session.on_exit = on_exit
             session.on_stopped = self.on_stopped
             self.active_sessions[profile_id] = session
+            if network is not None:
+                network.mark_running()
         except (Exception, asyncio.CancelledError):
             # Keep the starting marker until both browser and relay teardown
             # finish. Cancelling the request must not release a live profile.
             failed_session = BrowserSession(
-                profile_id, camoufox, _resolve_process_id(camoufox), socks_relay=relay
+                profile_id,
+                camoufox,
+                _resolve_process_id(camoufox),
+                socks_relay=relay,
+                network=network,
             )
             try:
                 await failed_session.terminate()
