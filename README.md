@@ -1,164 +1,114 @@
-# 噜噜指纹浏览器 (LuLu Fingerprint Browser)
+# 棱镜浏览器 (Prism Browser)
 
 [![CI](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml/badge.svg)](https://github.com/ConcertoNotes/Fingerprint-Browser/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Camoufox](https://img.shields.io/badge/browser-Camoufox-orange.svg)](https://github.com/daijro/camoufox)
 
-A self-hosted, open-source manager for [Camoufox](https://github.com/daijro/camoufox)
-antidetect browser profiles — a free alternative to AdsPower, Dolphin, Multilogin
-or GoLogin, for people who would rather run it themselves.
+A slim, local-first, all-in-one antidetect isolation browser desktop application —
+designed for strict multi-account isolation with zero-setup offline runtime
+packaging, map-first dedicated proxy node selection, fixed-optimization hardware
+fingerprints, and optional self-hosted cloud delivery.
 
-> **Based on [Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager).**
-> 噜噜指纹浏览器 is a derivative work (二次开发) of that MIT-licensed project by the
-> Camoufox Profile Manager Contributors, maintained by
-> [ConcertoNotes](https://github.com/ConcertoNotes). It adds Clash/Mihomo
-> subscriptions, per-profile Mihomo routing, measured exit locations on a world map,
-> IP-quality checks and a light interface — see
-> [Subscriptions, exit map and node binding](#subscriptions-exit-map-and-node-binding-unreleased).
-> Everything else, and the history before the fork, comes from the original project;
-> links to its issues and CI runs in older documents point there on purpose.
-> Internal names (`camoufox_pm`, the `camoufox-pm` command, `CPM_*` settings) are
-> unchanged so scripts and existing data keep working.
+> **Open-source attribution (MIT):** 棱镜浏览器 (Prism Browser) is a derivative work
+> based on [Camoufox Profile Manager](https://github.com/polyackiy/camoufox-profile-manager)
+> and built with open-source browser isolation and proxy routing engines. Internal
+> package identifiers (`camoufox_pm`, `camoufox-pm`, `CPM_*`) remain backwards-compatible
+> so existing local `data/` directories and SQLite databases (v0–v8) migrate cleanly.
 
-Each profile is **one long-lived machine**. It keeps the same fingerprint every
-session, along with its own cookies, storage and history, so an account opened
-from it in January still looks like the same computer in June.
+---
 
-> **Desktop release:** this repository has not published installers yet; run it
-> [from source](#from-source-developers). Once released, installers appear under
-> [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases) → **Assets**
-> (macOS Apple Silicon and Intel, Windows x64 and Ubuntu/Debian x64 are built by CI).
-> Releases are unsigned; certificates and macOS notarization are not planned and
-> are not release requirements. OS security warnings can appear.
-> See [Getting started](docs/getting-started.md) / [Начало работы](docs/getting-started.ru.md).
-> See [installation evidence and coverage limits](docs/desktop-acceptance.md).
-> Chrome migration remains experimental.
->
-> Current `main` includes unreleased additions for the combined 0.7.0 release.
-> See [delivery status and priorities](docs/roadmap.md#delivery-status-after-060)
-> for the scope of the published 0.6.0 installers and the next release.
+## Core Capabilities
 
-![The profiles list](docs/assets/screenshot-profiles.png)
+### 1. All-in-One Offline Desktop Runtime (Zero Setup)
 
-## What it does
+Desktop installers bundle the complete offline runtime inside a single lossless
+`zstd`-compressed payload:
 
-- **A profile is the same machine every launch.** Camoufox generates a fresh
-  fingerprint on every start, which is right for a privacy tool and wrong for a
-  long-lived account. The first launch resolves the fingerprint once and stores
-  it; every launch after replays it. Location, timezone and WebRTC stay dynamic
-  so they keep following the proxy. See
-  [docs/profile-settings.md](docs/profile-settings.md).
-- **Real device fingerprints.** Create a profile from one of the 312 fingerprints
-  Camoufox captured from actual machines, instead of a synthetic one.
-- **Profiles and groups** — create, edit, clone, delete, search, filter, bulk
-  actions, and grouping by client or purpose. A clone gets its own machine by
-  default: two profiles sharing one fingerprint are provably one computer.
-- **Browser control** — launch and stop a browser per profile; closing the window
-  yourself is noticed and the session is cleaned up.
-- **Scheduling** — open a profile on a schedule (warming), and keep its pinned
-  browser version current automatically. Hardware never rotates on a timer, on
-  purpose — [docs/scheduling.md](docs/scheduling.md).
-- **Proxies, checked before you trust them.** HTTP, HTTPS and SOCKS, with
-  passwords encrypted at rest when `CPM_SECRET_KEY` is set. *Check proxy* reports
-  where the proxy really comes out and whether the profile agrees with it — a
-  timezone on a different clock from the exit country is the kind of
-  contradiction a page can measure in two lines of JavaScript. The answer stays
-  in the profiles list — exit address, country and latency under the proxy, green
-  or amber or red — and a selection can be checked in one go.
-- **Reusable proxy library** — save named proxies, import a list and
-  [preview ordered assignments](docs/proxy-sequence.md) or assign one proxy to
-  several closed profiles. Library passwords are write-only and require
-  encryption. Assigned profiles retain independent copies. See the
-  [proxy guide](docs/proxy-library.md) and [protocol acceptance matrix](docs/proxy-support.md).
-- **Multi-user, when you need it.** Nothing to configure for the usual case: the
-  app binds to loopback and is open. Set `CPM_API_KEY` for machine clients, or
-  create an account (`camoufox-pm user add`) and humans get a login screen —
-  argon2id hashes, HttpOnly session cookies, a logout that really invalidates.
-  Administrators assign operator/viewer roles, profile access and separate export
-  grants from **Access**, with a searchable activity log. See [roles and access](docs/stage-three.md).
-- **Encrypted device synchronization (experimental, opt-in).** Opt in to closed-profile
-  handoff through your self-hosted relay, approve trusted devices, and retain
-  local recovery copies. Same tested OS/architecture/browser build only; local
-  roles and schedules stay local. See [synchronization setup](docs/sync-guide.md)
-  and the [support matrix](docs/sync-support-matrix.md).
-- **Move a profile anywhere.** Export a profile with its fingerprint *and* its
-  browser data into one archive, and import it on another machine.
-- **Cookie transfer** — import and export standard JSON or Netscape cookie files,
-  with validation, explicit merge/replacement and recovery before replacement.
-  See [cookies](docs/cookies.md).
-- **Templates and Firefox extensions** — reuse browser settings in independent
-  profiles and manage local add-ons without modifying Camoufox. Assigned add-ons
-  travel with profile archives. Create numbered [profile batches](docs/template-batches.md)
-  with an explicit proxy mapping and safe retry. See [templates](docs/templates.md) and
-  [extensions](docs/extensions.md).
-- **Tags and saved views** — label profiles individually or in bulk, then save
-  your search, filters and ordering for repeated work. See
-  [profile organization](docs/profile-organization.md).
-- **Bulk editing via Excel** — [docs/excel.md](docs/excel.md).
-- **REST API and web UI**, served on one port from one process.
-- **English and Simplified Chinese UI in the 0.6.0 installers.** Russian is
-  [merged on main for the combined 0.7.0 release](docs/localization.md).
-  Switch languages in the sidebar or on
-  the sign-in screen. The manager starts in Simplified Chinese; your choice is
-  saved in this browser. Profile browsers keep their own fingerprint languages
-  (English by default). Profile fingerprint languages stay separate.
-- **Optional Chrome migration** — import cookies and history from your own Chrome
-  profiles ([`extras/chrome_migration`](extras/chrome_migration/README.md)).
+- **Paired Isolation Browser Kernel** (`browser-kernel.tar.zst` with full cross-OS
+  anti-detection font packs, hardlink deduplication, and `zstd -19 --long=27`)
+- **Dedicated Local Proxy Routing Engine** (`bin/mihomo(.exe).zst`, per-window process
+  isolation, zero global TUN or shared selectors)
+- **Offline IP Geolocation Database** (`geoip/geoip.mmdb.zst`)
+- **Bundled Prism WebRTC & DNS Guard Extension** (`prism-webrtc-guard/`) and pinned
+  fingerprint model
 
-## What it looks like
+On first launch, Prism Browser verifies SHA-256 checksums and extracts the local
+runtime in 2–5 seconds with **zero network downloads, zero terminal commands, and
+zero missing-component warnings**. Subsequent launches open instantly.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screenshot-machine.png" alt="The pinned machine on a profile"></td>
-<td width="50%">
+### 2. Fixed-Optimization Isolation Engine (`src/camoufox_pm/core/isolation/`)
 
-**The pinned machine.** This is the part that makes a profile an account rather
-than a browser window. Every value here was resolved once and is replayed on
-every launch — the screen, the CPU count, the GPU string, the font set, the user
-agent. *Regenerate* moves the profile to different hardware, deliberately, and
-tells you what that costs.
+Every browser window is **one independent, long-lived machine**:
 
-The profile above is pinned to one of the 312 devices Camoufox captured from real
-machines, so the combination is one that actually exists rather than an assembly
-of plausible parts.
+- **Immediate Deduplicated Real-Device Pinning:** Creating, cloning, or rotating
+  a window allocates and pins a quality-filtered real device preset (`FP-XXXXXXXX`)
+  while avoiding hardware collisions with other local windows.
+- **Unified Anti-Leak Defaults:** Windows default to **Los Angeles time
+  (`America/Los_Angeles`)** and **English (`["en-US", "en"]`)** so browser
+  fingerprint locale and clock stay consistent regardless of exit IP (unless
+  explicitly switched to follow-exit mode).
+- **Bundled WebRTC & DNS Leak Guard (`prism-webrtc-guard`):** Enforces
+  `webRTCIPHandlingPolicy = disable_non_proxied_udp`, disables
+  `peerConnectionEnabled`, and disables `networkPredictionEnabled` inside every
+  isolated window, while excluding third-party online addons.
+- **Full-Traffic Fail-Closed Tunnel & Storage Isolation:**
+  - Private `0700` `user_data_dir` + isolated `.runtime/{tmp,cache,config}` per window.
+  - Pre-launch `user.js` locks proxy settings (`bypass=""`), disables HTTP/3,
+    disables DoH fallback (`network.trr.mode=5`), disables IPv6, and blocks telemetry.
+  - Host proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) are
+    scrubbed from child browser processes.
+- **10-Point Isolation Audit & One-Click Reoptimize:** `POST /api/v1/profiles/{id}/audit`
+  scores every window (0–100) across 10 checks; `POST /api/v1/profiles/{id}/reoptimize`
+  upgrades anti-leak policy settings without changing pinned hardware.
 
-</td>
-</tr>
-</table>
+### 3. Map-First Dedicated Proxy Selection
 
-| Scheduled work | System settings |
+- **World Map Picker inside Window Creation:** Pick a measured proxy exit directly
+  on the interactive world map (with shared-IP and occupied-node warnings), preview
+  the deduplicated real device, and atomically create + pin + bind in one step.
+- **Per-Window Dedicated Proxy Routing:** Each running bound window spawns its own
+  authenticated loopback proxy process (`MATCH,REJECT`, zero `DIRECT`). If a node
+  or process fails, connections **fail closed** with zero fallback to direct traffic.
+- **Subscriptions & Static IPs:** Manage cloud-delivered subscriptions, local
+  subscriptions (YAML / Base64 / share links), and dedicated static IPs with
+  measured exit coordinates and IP purity checks.
+
+### 4. Self-Hosted Cloud Delivery Center (`prism-cloud-server`)
+
+Deploy the lightweight companion server (`cloud_server/`) on any VPS or Docker
+host to centrally deliver verified isolation policies, managed subscriptions, and
+optional client-side encrypted window sync (see [docs/cloud-protocol.md](docs/cloud-protocol.md)):
+
+```bash
+PRISM_CLOUD_TOKEN="your-client-token" \
+PRISM_CLOUD_ADMIN_TOKEN="your-admin-token" \
+uv run prism-cloud-server --host 0.0.0.0 --port 8787
+```
+
+---
+
+## Install & Run
+
+### Desktop Installers (macOS & Windows)
+
+| Platform | Artifact |
 | --- | --- |
-| ![Schedules](docs/assets/screenshot-schedules.png) | ![Settings](docs/assets/screenshot-settings.png) |
-| Warming launches and browser-version refreshes. Hardware never rotates on a timer — [why](docs/scheduling.md). | Reports the effective configuration and warns when proxy passwords are unencrypted or the API is open. |
+| macOS Apple Silicon (M1+) | `prism-browser-macos-arm64.dmg` |
+| macOS Intel | `prism-browser-macos-x86_64.dmg` |
+| Windows 10/11 (x64) | `prism-browser-windows-x86_64-setup.exe` |
+| Linux (Debian/Ubuntu x64) | `prism-browser-linux-x86_64.deb` |
 
-## Install and run
+1. Install and open **棱镜浏览器 (Prism Browser)** (on macOS, drag into Applications).
+2. Wait 2–5 seconds on first boot while the bundled offline runtime initializes.
+3. Import a subscription, add a static IP, or connect your Cloud Delivery server, then
+   click **新建浏览器 (New Browser)**.
 
-### Desktop app — recommended
+> Releases are unsigned under [docs/signing.md](docs/signing.md); macOS/Windows may
+> show a standard unsigned-app prompt on first launch.
 
-1. Open [Releases](https://github.com/ConcertoNotes/Fingerprint-Browser/releases)
-   and choose the installer in **Assets** for your computer:
+### From Source (Developers)
 
-   | Computer | Download |
-   | --- | --- |
-   | Mac, Apple Silicon (M1 or newer) | `camoufox-pm-macos-arm64.dmg` |
-   | Mac, Intel | `camoufox-pm-macos-x86_64.dmg` |
-   | Windows 10/11, Intel/AMD 64-bit | `camoufox-pm-windows-x86_64-setup.exe` |
-   | Ubuntu 22.04+/compatible Debian, Intel/AMD 64-bit | `camoufox-pm-linux-x86_64.deb` |
-
-2. Install and open **噜噜指纹浏览器**. You do not need Python, Node.js
-   or a terminal. On Mac, drag the app into Applications first.
-3. Click **Install browser** in the app, wait for the download, and create your
-   first profile. The app shows progress and provides a retry if installation fails.
-
-Older releases may only offer Python packages. Desktop installers are unsigned
-under the [release policy](docs/signing.md); macOS/Windows can show a security warning.
-Read the [short beginner guide](docs/getting-started.md) for installation,
-backups, Trash, updates, and where your data lives.
-
-### From source (developers)
-
-Install [uv](https://docs.astral.sh/uv/) and Node.js 20.9+; uv manages Python.
+Requires [uv](https://docs.astral.sh/uv/) (Python 3.10+) and Node.js 20.9+.
 
 ```bash
 git clone https://github.com/ConcertoNotes/Fingerprint-Browser.git
@@ -168,281 +118,96 @@ uv run python scripts/build_webui.py
 uv run python -m camoufox_pm.desktop
 ```
 
-To use a browser tab instead of a desktop window, run `uv run camoufox-pm`.
-This CLI keeps the existing `data/profiles.db` path by default. The desktop
-launcher uses a persistent OS data folder. See [CLI options](docs/cli.md).
-On Linux, source desktop mode needs a supported pywebview GUI backend and system
-libraries; prefer the packaged `.deb` for the included Qt backend.
-
-Build a standalone desktop bundle with `uv sync --extra build` followed by
-`uv run python scripts/build_desktop.py --package`. Packaging tools differ by
-platform; see [releasing](docs/releasing.md).
-
-### With Docker
+Or run the local web server directly:
 
 ```bash
-docker compose up      # then open http://localhost:8000
+uv run camoufox-pm              # http://127.0.0.1:8000 (uses data/profiles.db)
+uv run camoufox-pm --desktop    # opens native desktop window
 ```
 
-One container serving the API and the UI on one port, like every other way of
-running it. The port is published on loopback only. Launching real browsers
-inside a container needs a virtual display; profile management, scheduling and
-the UI work as-is.
+### Build All-in-One Offline Desktop Installers (macOS / Windows)
 
-## First steps
+```bash
+uv sync --extra build
+uv run python scripts/prepare_bundled_runtime.py
+uv run python scripts/build_desktop.py --package
+```
 
-1. Install the Camoufox browser when prompted, then click **New profile**.
-2. Give the profile a name. Leave advanced fingerprint fields at their defaults,
-   or pick a real device if you need a particular machine.
-3. Add and check a proxy if you have one, or assign one from **Proxies**.
-   HTTP/HTTPS and SOCKS5 support credentials; SOCKS4 credentials are unsupported.
-4. Press **Run**. The profile stays running until you click **Stop** or close its
-   browser window.
+`scripts/prepare_bundled_runtime.py` prepares `.cache/bundle-runtime/<platform>-<arch>/`
+with `zstd -19` proxy engine + GeoIP and `zstd -19 --long=27` hardlink-deduplicated
+browser kernel. `scripts/build_desktop.py --package` builds the slimmed PyInstaller
+app, injects `runtime/`, and packages `prism-browser-macos-<arch>.dmg` (`ULMO` LZMA)
+or `prism-browser-windows-<arch>-setup.exe` (`NSIS SOLID LZMA`).
 
-Settings includes browser download retry, profile backups, and an update check. Deleted
-profiles go to **Trash** for recovery. Updates prepare a backup before offering
-an installer; replacing the app remains a manual installation step.
-[Getting started](docs/getting-started.md) explains these controls.
-The manager also provides [complete offline data/browser recovery](docs/update-recovery.md)
-and explicit preview-release discovery. These additions are included in the `v0.6.0-rc.4`
-installer release; signed automatic app replacement remains tracked in #63.
-[Roles, profile grants and activity history](docs/stage-three.md) are available
-under **Access**. Existing accounts migrate to administrators; export permission
-is separate from profile visibility.
-
-For Simplified Chinese UI and Linux input-method setup, see
-[简体中文与 Linux 输入法](docs/chinese-input.md).
+---
 
 ## Configuration
 
-The desktop app creates its data folder and encryption key automatically.
-Advanced/source configuration uses environment variables (prefix `CPM_`); copy
-`.env.example` to `.env` if needed. Explicit configuration also overrides desktop defaults.
+The desktop app automatically creates its persistent data directory and `secret.key`.
+CLI/server deployments read `CPM_*` environment variables (or `.env`):
 
-| Variable           | Default                 | Description                                     |
-| ------------------ | ----------------------- | ----------------------------------------------- |
-| `CPM_HOST`         | `127.0.0.1`             | Bind address                                    |
-| `CPM_PORT`         | `8000`                  | Port                                            |
-| `CPM_DB_PATH`      | `data/profiles.db` (CLI) | SQLite database path; desktop uses the OS data folder                            |
-| `CPM_LEASE_TTL`    | `120`                   | Seconds a profile's lease survives without a heartbeat — how long a crashed instance keeps its profiles locked. Minimum 60 |
-| `CPM_SECRET_KEY`   | *(empty)*               | Fernet key; encrypts proxy passwords at rest    |
-| `CPM_API_KEY`      | *(empty)*               | If set, required as the `X-API-Key` header (machine clients) |
-| `CPM_SESSION_TTL_HOURS` | `168`              | Login session lifetime, in hours                |
-| `CPM_SECURE_COOKIES` | `0`                   | Force the session cookie's `Secure` flag (set behind a TLS proxy) |
-| `CPM_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins                 |
-| `CPM_WEBUI_DIR`    | *(auto)*                | Override where the bundled web UI is served from |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CPM_HOST` | `127.0.0.1` | Server bind host |
+| `CPM_PORT` | `8000` | Server bind port |
+| `CPM_DB_PATH` | `data/profiles.db` | SQLite database path (desktop uses OS data dir) |
+| `CPM_LEASE_TTL` | `120` | Profile lease TTL in seconds (minimum `60`) |
+| `CPM_SECRET_KEY` | *(empty)* | Fernet key encrypting proxy, subscription, and cloud secrets at rest |
+| `CPM_API_KEY` | *(empty)* | Optional `X-API-Key` header guard for API clients |
+| `CPM_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
+| `CPM_WEBUI_DIR` | *(auto)* | Override directory for bundled web UI assets |
+| `CPM_BUNDLED_RUNTIME_DIR` | *(auto)* | Override directory for bundled offline runtime |
+| `CPM_MIHOMO_PATH` | *(auto)* | Optional custom proxy routing engine binary path |
+| `CPM_CLOUD_URL` | *(empty)* | Default Cloud Delivery server HTTPS URL |
+| `CPM_CLOUD_TOKEN` | *(empty)* | Default Cloud Delivery Bearer token |
+| `CPM_CLOUD_ALLOW_LOCAL` | `0` | Allow `http://127.0.0.1` / loopback cloud server for local dev/tests |
 
-Generate an encryption key with:
-
-```bash
-uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Create the first administrator from the CLI, then manage users, roles and profile
-grants in **Access** in the web UI. CLI account management remains available: `camoufox-pm user add
-<name>` creates one, and from then on the API and UI require a login (see
-[SECURITY.md](SECURITY.md#authentication)).
-
-### Running more than one instance
-
-Two instances against one database — the web UI and a CLI launch on the same
-machine, or two machines sharing a database file — must not open the same
-profile at once. One identity in two browsers means one cookie jar written from
-two places and the same account live from two IPs, which is exactly the
-correlation a profile exists to avoid.
-
-Each launch therefore takes a **lease** on the profile, and a second instance is
-refused (`409` over the API) until the browser closes. A lease is renewed while
-the browser runs and expires `CPM_LEASE_TTL` seconds after an instance stops
-renewing, so a machine that died does not lock its profiles forever.
+### Multi-Instance Safety & Leases
 
 ```bash
-camoufox-pm leases          # who holds what
-camoufox-pm unlock <id>     # force-release, after checking the holder is gone
+camoufox-pm leases               # inspect active profile leases
+camoufox-pm unlock <id> [--yes]  # force-release a stuck lease after verifying closure
 ```
 
-Force-release is CLI-only by design: it is the one operation that can put two
-browsers on one identity, so it takes shell access to the host rather than a
-button in the UI.
+---
 
-Editing is protected separately, because a profile is usually edited while
-nobody is running it. Each save carries the version it was based on, so two
-people editing the same profile no longer overwrite each other: the second save
-is refused, and the web UI says what changed and lets you apply your version
-deliberately rather than losing either edit.
-
-Sharing the database file itself is safe between processes on one machine.
-Across machines it needs a filesystem whose locking SQLite can trust — which
-rules out most NFS and SMB mounts, where a lease may be read as free while
-another host holds it.
-
-## Subscriptions, exit map and node binding (unreleased)
-
-Import Clash/Mihomo subscriptions, measure where each node **really** comes out,
-see the exits on an offline world map and bind a node to a profile. Each running
-bound profile gets its own Mihomo process and its own authenticated loopback
-listener; nothing uses a shared selector, so changing one profile's node never
-re-routes another. Details: [architecture](docs/network-architecture.md) ·
-[API](docs/network-api.md) · [test report](docs/network-test-report.md).
-
-**1. Install Mihomo (1.18+).** The manager refuses setuid/setgid or shared-writable
-binaries. Desktop clients often ship a setuid-root sidecar, so install a normal copy:
-
-```bash
-uv run python scripts/prepare_mihomo.py --from "/path/to/mihomo"
-# or download an official release and verify it against a hash you trust:
-uv run python scripts/prepare_mihomo.py --url https://github.com/MetaCubeX/mihomo/releases/download/<ver>/<asset>.gz --sha256 <hash>
-```
-
-Source checkouts find `.cache/mihomo/mihomo` automatically; otherwise set
-`CPM_MIHOMO_PATH` or the path in **Settings → Network nodes and map**, which also
-reports the engine version and GeoIP database. The GeoIP database is the one the
-browser installer already downloads.
-
-**2. Import.** **Proxy subscriptions → Add subscription URL** (HTTPS, fetched with
-`User-Agent: clash.meta/v1.18.0`) or **Import file** / paste YAML. Only the
-`proxies` list is used; provider rules, DNS, TUN and controller settings are ignored.
-Base64/share-link lists and provider-only files are refused with an explanation.
-An encryption key is required: subscription links and node secrets are stored
-sealed and never shown again.
-
-**3. Check and map.** **Check unmeasured** runs one temporary Mihomo for the whole
-batch. Exits are measured through each node and placed with the local GeoIP
-database — never from the entry server, the node name or its flag; nodes that
-cannot be placed stay under *Not located*. Clicking a location lists every node
-at those coordinates. **Check exit and quality** on one node also asks ipinfo.io
-and IPPure (and Scamalytics with your own API key) *through that node* and shows
-a purity score with every input. IPIP.la has no public API: start the profile and
-open it from the node panel, inside that profile's browser.
-
-**4. Bind and launch.** Select a stopped profile on the left, then **Bind**. The
-binding replaces the profile's own proxy from its next launch (a running profile
-is refused, never hot-switched). The launch starts the engine, verifies the exit
-through it and only then starts the browser; Camoufox derives timezone, location
-and WebRTC from that exit. If the node or engine fails, the launch stops — or,
-while running, connections fail (the profile is marked *degraded*; **Reconnect**
-restarts the same node). There is no fallback to a direct connection, the system
-proxy or another node.
-
-**Troubleshooting**
-
-| Symptom | Cause and fix |
-| --- | --- |
-| `binary_setuid` / `binary_writable` | Run `scripts/prepare_mihomo.py --from <path>` and use the copy |
-| `secrets_unavailable` | Restore `secret.key` or set `CPM_SECRET_KEY` |
-| `blocked_address` on import | The URL (or a redirect) resolves to a private/local address |
-| `base64_unsupported` / `uri_list_unsupported` | Choose the Clash/Mihomo format in the provider panel |
-| Launch `502 node_unreachable` | The node is down; check it on the map or bind another |
-| Launch `422 node_retired` | The subscription no longer lists that node; bind another |
-| Many nodes, one exit IP | Shown as *shared by N*: different nodes are not different public IPs |
-| Sources disagree on the city | IP geolocation is approximate; the map uses the same GeoIP point as the browser |
-
-Loopback listeners are not an isolation boundary against untrusted local software,
-and nothing here prevents a site or provider from correlating accounts by other means.
-
-## Documentation
-
-| Document | What it covers |
-| -------- | -------------- |
-| [docs/getting-started.md](docs/getting-started.md) | Desktop installation and first steps |
-| [docs/automation.md](docs/automation.md) | Unreleased reusable workflows, scheduling and safe cancellation |
-| [docs/cli.md](docs/cli.md) | Every command and flag |
-| [docs/api.md](docs/api.md) | The REST API, endpoint by endpoint |
-| [docs/network-architecture.md](docs/network-architecture.md) | Subscriptions, Mihomo runtimes, exit checks, IP quality and the map |
-| [docs/network-api.md](docs/network-api.md) | The `/api/v1/network` endpoints |
-| [docs/profile-settings.md](docs/profile-settings.md) | What each setting does, how the pinned machine works, and what Camoufox cannot do |
-| [docs/scheduling.md](docs/scheduling.md) | Scheduled launches and browser refresh, and why hardware rotation is not offered |
-| [docs/excel.md](docs/excel.md) | Bulk import and export |
-| [docs/accessibility-roadmap.md](docs/accessibility-roadmap.md) | Plan for reaching non-technical users |
-| [docs/releasing.md](docs/releasing.md) | Cutting a release |
-| [docs/signing.md](docs/signing.md) | Unsigned release policy and package integrity |
-| [docs/roadmap.md](docs/roadmap.md) | Merged work, release status and next priorities |
-| [docs/operation-diagnostics.md](docs/operation-diagnostics.md) | Safe diagnostic evidence for issue reports |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Working on the project |
-| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
-
-## Measured, not assumed
-
-Fingerprint behavior was checked against a running browser, and several results
-turned out differently than expected. The measurements are in the repository, as
-tests that fail if the behaviour changes:
-
-| What was measured | Result |
-| --- | --- |
-| Does an unpinned profile keep its hardware between launches? | **No.** The same profile reported 1600x900 then 3440x1440, 12 then 32 CPU cores, an NVIDIA then an AMD GPU. This is why pinning exists. |
-| Is the canvas stable for a site across sessions? | **No, by default** — it is stable within a session and per site, and changes on the next launch. `stable_canvas` fixes that, at the cost of being identical across sites. Both are asserted in [browser tests](tests/browser/test_fingerprint_stability.py). |
-| Does Camoufox's `canvas:seed` property work? | **No.** It is declared and passed through, and nothing reads it. Reported upstream as [daijro/camoufox#721](https://github.com/daijro/camoufox/issues/721) with a reproduction. |
-| What happens if a profile sets coordinates? | Camoufox's IP lookup switches off, and Firefox then reports **the host machine's own timezone** — a real leak, found by reading the clock in a live browser. Fixed by filling that in ourselves. |
-
-The same discipline applies to the code: cleanup that could delete every profile
-directory, clones that shared a fingerprint with their source, and a release that
-reported the wrong version were all found by running the thing, not by reading
-it. See [CHANGELOG.md](CHANGELOG.md).
-
-## Architecture
-
-```
-src/camoufox_pm/
-├── main.py             FastAPI app; serves the API and the bundled UI
-├── cli.py              the camoufox-pm command, including user accounts
-├── config.py           environment-based settings
-├── core/
-│   ├── models.py            profiles, groups, browser settings, schedules
-│   ├── database.py          SQLite storage and migrations
-│   ├── profile_manager.py   profile lifecycle and browser control
-│   ├── browser_session.py   running browsers
-│   ├── fingerprint_store.py pinning, refreshing, and the real device presets
-│   ├── fingerprint_generator.py  the high-level constraints a new profile starts from
-│   ├── proxy_check.py       where a proxy exits, and whether the profile agrees
-│   ├── scheduler.py         scheduled launches and browser refreshes
-│   ├── profile_archive.py   whole-profile export and import
-│   ├── excel_manager.py     bulk import and export
-│   ├── auth.py              password hashing and login sessions
-│   ├── crypto.py            proxy-password encryption at rest
-│   └── cleanup.py           finding and removing orphaned profile directories
-└── api/                routes, models, error shape, middleware
-web/                    Next.js web interface
-extras/chrome_migration/  optional Chrome → Camoufox migration
-```
-
-**Backend:** Python, FastAPI, SQLite, Camoufox + Playwright.
-**Frontend:** Next.js 16, React 19, TypeScript, Tailwind v4.
-
-## Development
+## Development & Verification
 
 ```bash
 uv sync --extra dev
-uv run ruff check src tests
-uv run mypy src/camoufox_pm
-uv run pytest -m "not browser"    # fast suite
-uv run pytest -m browser          # launches a real browser, needs `camoufox fetch`
+uv run ruff check src cloud_server scripts tests
+uv run ruff format --check src cloud_server scripts tests
+uv run mypy src/camoufox_pm cloud_server
+uv run pytest --no-network -m "not browser"
+uv run pytest -m browser
+
+cd web
+npm run lint
+npm test
+npx tsc --noEmit
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+---
 
-## Disclaimer
+## Documentation
 
-This tool is for lawful use only — for example testing, privacy, and managing
-multiple accounts in accordance with each site's terms of service. You are
-responsible for how you use it. Antidetect browsing does not make any activity
-that would otherwise be against a service's rules acceptable.
+| Document | Topic |
+| --- | --- |
+| [docs/cloud-protocol.md](docs/cloud-protocol.md) | Cloud Delivery wire protocol, policy whitelist, and VPS deployment |
+| [docs/network-architecture.md](docs/network-architecture.md) | Subscriptions, dedicated per-window proxy runtimes, exit checks, and world map |
+| [docs/network-api.md](docs/network-api.md) | `/api/v1/network` endpoint reference |
+| [docs/profile-settings.md](docs/profile-settings.md) | Pinned hardware identity and fingerprint behavior |
+| [docs/cookies.md](docs/cookies.md) | JSON & Netscape cookie import/export safety |
+| [docs/cli.md](docs/cli.md) | CLI commands and flags |
+| [docs/releasing.md](docs/releasing.md) | Building and cutting desktop releases |
+| [docs/signing.md](docs/signing.md) | Unsigned release policy and checksums |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow |
+| [SECURITY.md](SECURITY.md) | Security model and reporting |
+
+---
 
 ## License
 
 [MIT](LICENSE). Original work © Camoufox Profile Manager Contributors
 ([polyackiy/camoufox-profile-manager](https://github.com/polyackiy/camoufox-profile-manager));
-modifications © ConcertoNotes. The original copyright and permission notice are
-kept in [LICENSE](LICENSE) as the licence requires.
-
-Built on [Camoufox](https://github.com/daijro/camoufox) by daijro.
-
----
-
-Русская версия: [README.ru.md](README.ru.md).
-
-## Next stage: synchronization
-
-[Stage four architecture and plan](docs/stage-four-sync.md) proposes encrypted
-closed-profile handoff between trusted devices of one owner. This is planned
-work, not a shipped synchronization feature. Follow [#82](https://github.com/polyackiy/camoufox-profile-manager/issues/82)
-for the implementation sequence and security acceptance gates.
+modifications © ConcertoNotes.

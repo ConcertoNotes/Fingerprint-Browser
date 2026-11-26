@@ -1,0 +1,23 @@
+# 复制本文件为 Caddyfile 后使用：
+#   cp Caddyfile.example Caddyfile
+#
+# 默认会自动读取 .env 中的 PRISM_CLOUD_DOMAIN 变量（例如 cloud.example.com），
+# 也可以直接把下面的 {$PRISM_CLOUD_DOMAIN} 替换为你的真实域名。
+# Caddy 会自动通过 Let's Encrypt 申请并定期续期 HTTPS 证书（需提前解析好域名 A 记录并放行 80/443 端口）。
+
+{$PRISM_CLOUD_DOMAIN} {
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    reverse_proxy cloud-server:8787 {
+        header_up X-Real-IP {remote_host}
+    }
+}

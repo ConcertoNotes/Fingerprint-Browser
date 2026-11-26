@@ -56,21 +56,51 @@ class HealthResponse(BaseModel):
     api_version: str
     database: str = Field(..., description="connected or disconnected")
     profiles_count: int | None = Field(
-        None, description="Profile count in open local mode; null when authentication is configured"
+        None, description="Profile count in open local mode; null when API key is configured"
     )
 
 
 class SystemStatusResponse(BaseModel):
-    """System status."""
+    """Live system and runtime status driving the desktop bottom status bar."""
 
     total_profiles: int = Field(..., description="Total profiles")
-    active_profiles: int = Field(..., description="Active profiles")
+    active_profiles: int = Field(0, description="Active profiles")
     running_browsers: int = Field(..., description="Running browsers")
     total_groups: int = Field(..., description="Total groups")
-    system_load: float = Field(..., description="System load")
-    memory_usage: float = Field(..., description="Memory usage in %")
-    disk_usage: float = Field(..., description="Disk usage in %")
-    uptime_seconds: int = Field(..., description="Uptime in seconds")
+    cpu_percent: float = Field(..., description="CPU utilization percentage")
+    memory_used_mb: float = Field(..., description="Memory used in MB")
+    memory_total_mb: float = Field(..., description="Total memory in MB")
+    memory_percent: float = Field(..., description="Memory usage percentage")
+    mihomo_available: bool = Field(..., description="Whether proxy routing engine is ready")
+    mihomo_version: str | None = Field(
+        None, description="Proxy routing engine version if available"
+    )
+    cloud_policy_source: str = Field(..., description="'cloud' or 'builtin'")
+    cloud_policy_version: str = Field(..., description="Active isolation policy version")
+    browser_installed: bool = Field(
+        ..., description="Whether isolation browser kernel is installed"
+    )
+    uptime_seconds: int = Field(..., description="Server uptime in seconds")
+    # Edition & cloud license entitlement fields
+    client_edition: str = Field("standard", description="Client edition ('standard' or 'customer')")
+    brand_name: str = Field("棱镜浏览器", description="Configured client brand name")
+    require_activation: bool = Field(
+        False, description="Whether customer edition requires activation before normal use"
+    )
+    entitlement_status: str = Field("none", description="Cloud license entitlement status")
+    entitlement_tenant_name: str | None = Field(
+        None, description="Licensed tenant name if activated"
+    )
+    entitlement_expires_at: str | None = Field(
+        None, description="License expiration ISO timestamp if applicable"
+    )
+    entitlement_days_remaining: int | None = Field(
+        None, description="Remaining license days if expiration is set"
+    )
+    # Legacy compatibility fields
+    system_load: float = Field(0.0, description="System load average")
+    memory_usage: float = Field(0.0, description="Memory usage in %")
+    disk_usage: float = Field(0.0, description="Disk usage in %")
 
 
 class SystemInfoData(BaseModel):
@@ -90,28 +120,26 @@ class SystemConfigData(BaseModel):
     port: int
     database_path: str
     api_key_set: bool
-    # Whether any user account exists, i.e. whether the API requires a login
-    # session (or the API key) rather than being open.
-    user_auth_enabled: bool
     encryption_enabled: bool
     cors_origins: list[str]
     camoufox_available: bool
     uptime_seconds: int
-    # windows, macos or linux. New profiles default to it: a fingerprint for
-    # another OS loads that system's whole font set and starts far slower.
-    host_os: str = "linux"
+    host_os: str = "macos"
 
 
 class DevicePreset(BaseModel):
-    """A fingerprint captured from a real machine, from Camoufox's catalogue."""
+    """A quality-filtered real device fingerprint preset."""
 
-    id: str = Field(..., description="Preset id, '<os>:<index>'")
+    id: str = Field(..., description="Preset id, '<os>:<index>' or 'cloud:<os>:<index>'")
     os: str
+    source: str = "camoufox"
     screen: str | None = None
     hardware_concurrency: int | None = None
     gpu: str | None = None
     vendor: str | None = None
     user_agent: str | None = None
+    fingerprint_hash: str | None = None
+    in_use: bool = False
 
 
 class PresetListData(BaseModel):
@@ -121,33 +149,24 @@ class PresetListData(BaseModel):
     total: int
 
 
-class ExcelImportData(BaseModel):
-    """Payload of the Excel import endpoint."""
-
-    created_count: int
-    updated_count: int
-    error_count: int
-    errors: list[str]
-
-
 class ProfileDiagnosticResponse(BaseModel):
     """Result of a profile storage diagnostic."""
 
-    total_profiles_in_db: int = Field(..., description="Total profiles in the database")
-    total_directories_on_disk: int = Field(..., description="Total directories on disk")
-    total_disk_size_mb: float = Field(..., description="Total size in MB")
-    orphaned_directories: int = Field(..., description="Orphaned directories")
-    orphaned_size_mb: float = Field(..., description="Size of orphaned directories in MB")
-    missing_directories: int = Field(..., description="Profiles without directories")
-    healthy_profiles: int = Field(..., description="Healthy profiles")
-    issues_found: int = Field(..., description="Issues found")
+    total_profiles_in_db: int
+    total_directories_on_disk: int
+    total_disk_size_mb: float
+    orphaned_directories: int
+    orphaned_size_mb: float
+    missing_directories: int
+    healthy_profiles: int
+    issues_found: int
 
 
 class ProfileCleanupResponse(BaseModel):
     """Result of a profile storage cleanup."""
 
-    orphaned_removed: int = Field(..., description="Orphaned directories removed")
-    directories_created: int = Field(..., description="Directories created")
-    freed_space_mb: float = Field(..., description="Freed space in MB")
-    dry_run: bool = Field(..., description="Dry run")
-    message: str = Field(..., description="Result message")
+    orphaned_removed: int
+    directories_created: int
+    freed_space_mb: float
+    dry_run: bool
+    message: str

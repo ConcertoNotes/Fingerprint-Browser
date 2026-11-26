@@ -17,7 +17,7 @@ const ToastContext = createContext<{
   toast: (kind: ToastKind, title: string, detail?: string) => void
 }>({ toast: () => {} })
 
-/** Replaces window.alert: non-blocking, stacked, self-dismissing. */
+/** Non-blocking, stacked, self-dismissing notifications positioned cleanly above the bottom status bar. */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
 
@@ -26,7 +26,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const toast = useCallback((kind: ToastKind, title: string, detail?: string) => {
-    // Date.now collides when two toasts land in the same millisecond.
     const id = Date.now() + Math.random()
     setToasts((current) => [...current, { id, kind, title, detail }])
   }, [])
@@ -35,7 +34,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={{ toast }}>
       {children}
       <div
-        className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[340px] flex-col gap-2"
+        className="pointer-events-none fixed bottom-10 right-4 z-50 flex w-[356px] flex-col gap-2"
         role="status"
         aria-live="polite"
       >
@@ -50,26 +49,43 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const { t } = useI18n()
   useEffect(() => {
-    // Errors stay longer — they usually carry something worth reading.
-    const timer = setTimeout(onDismiss, toast.kind === 'error' ? 8000 : 4000)
+    const timer = setTimeout(onDismiss, toast.kind === 'error' ? 7500 : 3800)
     return () => clearTimeout(timer)
   }, [onDismiss, toast.kind])
 
   const Icon = toast.kind === 'ok' ? Check : toast.kind === 'error' ? TriangleAlert : Info
-  const tone =
-    toast.kind === 'ok' ? 'text-ok' : toast.kind === 'error' ? 'text-danger' : 'text-ink-dim'
+  const badge =
+    toast.kind === 'ok'
+      ? 'bg-ok-shade text-ok ring-1 ring-ok/25'
+      : toast.kind === 'error'
+        ? 'bg-danger-shade text-danger ring-1 ring-danger/25'
+        : 'bg-signal-shade text-signal ring-1 ring-signal/25'
+  const accentBar =
+    toast.kind === 'ok'
+      ? 'bg-ok-dot'
+      : toast.kind === 'error'
+        ? 'bg-danger-dot'
+        : 'bg-signal'
 
   return (
-    <div className="dialog-in pointer-events-auto flex gap-2.5 rounded-lg border border-line bg-raised p-3 shadow-lg shadow-black/40">
-      <Icon size={15} strokeWidth={2} className={`mt-px shrink-0 ${tone}`} />
-      <div className="flex-1">
-        <div className="font-medium">{toast.title}</div>
+    <div className="dialog-in modal-sheet pointer-events-auto relative flex items-start gap-2.5 overflow-hidden rounded-xl p-3 pl-3.5 backdrop-blur-xl">
+      <span className={`absolute bottom-2 left-0 top-2 w-[3px] rounded-r-full ${accentBar}`} aria-hidden="true" />
+      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${badge}`}>
+        <Icon size={11.5} strokeWidth={2.4} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium text-ink">{toast.title}</div>
         {toast.detail && (
-          <div className="mt-0.5 whitespace-pre-wrap break-words text-ink-dim">{toast.detail}</div>
+          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] text-ink-dim">{toast.detail}</div>
         )}
       </div>
-      <button onClick={onDismiss} aria-label={t('Dismiss')} className="h-fit text-ink-faint hover:text-ink">
-        <X size={14} strokeWidth={2} />
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={t('Dismiss')}
+        className="h-fit cursor-pointer rounded p-0.5 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+      >
+        <X size={13} strokeWidth={2} />
       </button>
     </div>
   )

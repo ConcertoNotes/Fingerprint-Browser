@@ -1,609 +1,112 @@
-"""Tests for the browser session registry (no real browser launched)."""
+"""Unit tests for Electron-managed browser session tracking, heartbeats, and teardown."""
+
+from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-import psutil
 import pytest
 
-from camoufox_pm.core import browser_session as bs
-from camoufox_pm.core.browser_session import (
-    BrowserLaunchError,
-    BrowserSession,
-    BrowserSessionManager,
-    _resolve_process_id,
-)
+from camoufox_pm.core.browser_session import BrowserSession, BrowserSessionManager
 
 
-class FakeBrowser:
-    """Stands in for the Playwright browser/context returned by a launch.
+class FakeNetwork:
+    def __init__(self) -> None:
+        self.running = False
+        self.closed = 0
 
-    Records the handlers registered on it so that a user closing the window can
-    be simulated, which is the primary teardown signal in production.
-    """
+    def mark_running(self) -> None:
+        self.running = True
 
-    def __init__(self, pid: int | None = None):
-        self.handlers: dict[str, list] = {}
-        if pid is not None:
-            self._browser_process = type("Proc", (), {"pid": pid})()
-
-    def on(self, event: str, handler) -> None:
-        self.handlers.setdefault(event, []).append(handler)
-
-    def fire(self, event: str) -> None:
-        for handler in self.handlers.get(event, []):
-            handler()
-
-
-class FakeCamoufox:
-    """Stands in for AsyncCamoufox, counting how often it was started and closed."""
-
-    def __init__(self, browser: FakeBrowser | None = None, fail: Exception | None = None):
-        self.browser = browser if browser is not None else FakeBrowser()
-        self.fail = fail
-        self.starts = 0
-        self.exits = 0
-        self.exit_error: Exception | None = None
-
-    async def start(self):
-        self.starts += 1
-        if self.fail is not None:
-            raise self.fail
-        return self.browser
-
-    async def __aexit__(self, *_exc):
-        self.exits += 1
-        if self.exit_error is not None:
-            raise self.exit_error
-
-
-@pytest.fixture
-def installed(monkeypatch):
-    """Pretend Camoufox is installed and hand every launch the given stand-in."""
-
-    def install(camoufox: FakeCamoufox) -> FakeCamoufox:
-        monkeypatch.setattr(bs, "CAMOUFOX_AVAILABLE", True)
-        monkeypatch.setattr(bs, "AsyncCamoufox", lambda **_options: camoufox)
-        return camoufox
-
-    return install
-
-
-async def settle(manager: BrowserSessionManager) -> None:
-    """Await the teardown tasks a close event scheduled.
-
-    The manager keeps strong references to them, so this is deterministic: no
-    sleeping and no polling.
-    """
-    while manager._exit_tasks:
-        await asyncio.gather(*list(manager._exit_tasks))
-
-
-def test_register_and_list_active():
-    mgr = BrowserSessionManager()
-    mgr.active_sessions["p1"] = BrowserSession("p1", camoufox=None, process_id=None)
-    active = mgr.list_active()
-    assert active[0]["profile_id"] == "p1"
-
-
-def test_is_running_guard():
-    mgr = BrowserSessionManager()
-    mgr.active_sessions["p1"] = BrowserSession("p1", camoufox=None, process_id=None)
-    assert mgr.is_running("p1") is True
-    assert mgr.is_running("p2") is False
+    async def close(self) -> None:
+        self.closed += 1
 
 
 @pytest.mark.asyncio
-async def test_close_unknown_returns_false():
-    mgr = BrowserSessionManager()
-    assert await mgr.close("missing") is False
-
-
-@pytest.mark.asyncio
-async def test_close_removes_session():
-    mgr = BrowserSessionManager()
-    mgr.active_sessions["p1"] = BrowserSession("p1", camoufox=None, process_id=None)
-    assert await mgr.close("p1") is True
-    assert mgr.is_running("p1") is False
-
-
-@pytest.mark.asyncio
-async def test_terminate_is_idempotent():
-    session = BrowserSession("p1", camoufox=None, process_id=None)
-    await session.terminate()
-    assert session._terminated is True
-    # A second call (e.g. close event racing the fallback monitor) must not raise.
-    await session.terminate()
-
-
-@pytest.mark.asyncio
-async def test_handle_exit_notifies_once_and_prunes():
-    """A user-closed browser routes through _handle_exit exactly once."""
-    mgr = BrowserSessionManager()
-    calls = []
-    session = BrowserSession("p1", camoufox=None, process_id=None)
-
-    async def on_exit(profile_id):
-        calls.append(profile_id)
-
-    session.on_exit = on_exit
-    mgr.active_sessions["p1"] = session
-
-    await mgr._handle_exit("p1")
-    assert calls == ["p1"]
-    assert mgr.is_running("p1") is False
-
-    # Fallback monitor firing after the close event must be a no-op.
-    await mgr._handle_exit("p1")
-    assert calls == ["p1"]
-
-
-# -- Launching ----------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_launching_a_profile_twice_reuses_the_running_browser(installed):
-    """Two windows on one profile would have them writing the same databases."""
-    camoufox = installed(FakeCamoufox())
-    mgr = BrowserSessionManager()
-
-    first = await mgr.launch("p1", {})
-    second = await mgr.launch("p1", {})
-
-    assert second is first
-    assert camoufox.starts == 1
-
-
-@pytest.mark.asyncio
-async def test_a_failed_launch_leaves_nothing_running(installed):
-    """A half-registered session would make the profile unlaunchable forever:
-    every later attempt would report it as already running."""
-    installed(FakeCamoufox(fail=RuntimeError("no display")))
-    mgr = BrowserSessionManager()
-
-    with pytest.raises(BrowserLaunchError, match="no display"):
-        await mgr.launch("p1", {})
-
-    assert mgr.is_running("p1") is False
-    assert mgr.list_active() == []
-
-
-@pytest.mark.asyncio
-async def test_without_camoufox_installed_the_error_says_how_to_install_it(monkeypatch):
-    monkeypatch.setattr(bs, "CAMOUFOX_AVAILABLE", False)
-    mgr = BrowserSessionManager()
-
-    with pytest.raises(BrowserLaunchError, match="pip install"):
-        await mgr.launch("p1", {})
-
-
-@pytest.mark.asyncio
-async def test_no_watchdog_is_started_when_no_process_id_could_be_resolved(installed):
-    """The watchdog tears the session down as soon as its pid stops existing, so
-    starting one for a pid we never resolved would close the browser at once."""
-    installed(FakeCamoufox(FakeBrowser(pid=None)))
-    mgr = BrowserSessionManager()
-
-    session = await mgr.launch("p1", {})
-
-    assert session.process_id is None
-    assert session.monitor_task is None
-
-
-# -- The user closes the window ------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_closing_the_window_tears_the_session_down(installed):
-    camoufox = installed(FakeCamoufox())
-    mgr = BrowserSessionManager()
-    closed = []
-
-    async def on_exit(profile_id):
-        closed.append(profile_id)
-
-    await mgr.launch("p1", {}, on_exit=on_exit)
-    camoufox.browser.fire("close")
-    await settle(mgr)
-
-    assert closed == ["p1"]
-    assert mgr.is_running("p1") is False
-    assert camoufox.exits == 1
-
-
-@pytest.mark.asyncio
-async def test_close_and_disconnected_together_tear_down_only_once(installed):
-    """Playwright fires both for one window; the profile must not be logged as
-    closed twice, nor the context closed twice."""
-    camoufox = installed(FakeCamoufox())
-    mgr = BrowserSessionManager()
-    closed = []
-
-    async def on_exit(profile_id):
-        closed.append(profile_id)
-
-    await mgr.launch("p1", {}, on_exit=on_exit)
-    camoufox.browser.fire("close")
-    camoufox.browser.fire("disconnected")
-    await settle(mgr)
-
-    assert closed == ["p1"]
-    assert camoufox.exits == 1
-
-
-@pytest.mark.asyncio
-async def test_a_session_whose_process_vanished_is_still_listed(monkeypatch):
-    """Listing used to prune those sessions, which skipped terminate() and the
-    exit handler and so leaked the Camoufox context. Listing is a pure read."""
-    monkeypatch.setattr(psutil, "pid_exists", lambda _pid: False)
-    mgr = BrowserSessionManager()
-    mgr.active_sessions["p1"] = BrowserSession("p1", camoufox=None, process_id=4242)
-
-    assert [s["profile_id"] for s in mgr.list_active()] == ["p1"]
-    assert mgr.is_running("p1") is True
-
-
-@pytest.mark.asyncio
-async def test_the_watchdog_tears_down_when_the_process_disappears(monkeypatch):
-    monkeypatch.setattr(psutil, "pid_exists", lambda _pid: False)
-    mgr = BrowserSessionManager()
-    camoufox = FakeCamoufox()
-    session = BrowserSession("p1", camoufox=camoufox, process_id=4242)
-    closed = []
-
-    async def on_exit(profile_id):
-        closed.append(profile_id)
-
-    session.on_exit = on_exit
-    mgr.active_sessions["p1"] = session
-
-    await mgr._monitor("p1", 4242)
-
-    assert closed == ["p1"]
-    assert mgr.is_running("p1") is False
-    assert camoufox.exits == 1
-
-
-@pytest.mark.asyncio
-async def test_terminating_stops_the_watchdog():
-    """A watchdog outliving its session would tear down whatever session took its
-    place under the same profile id."""
-    session = BrowserSession("p1", camoufox=None, process_id=4242)
-    session.monitor_task = asyncio.create_task(asyncio.sleep(3600))
-
-    await session.terminate()
-
-    assert session.monitor_task.cancelled()
-
-
-# -- Teardown that goes wrong ---------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_a_browser_that_fails_to_close_is_still_forgotten(installed):
-    """A crashed browser raises on close. Keeping the session would leave the
-    profile permanently 'running' and impossible to launch again."""
-    camoufox = installed(FakeCamoufox())
-    camoufox.exit_error = RuntimeError("connection already closed")
-    mgr = BrowserSessionManager()
-
-    await mgr.launch("p1", {})
-
-    assert await mgr.close("p1") is True
-    assert mgr.is_running("p1") is False
-
-
-@pytest.mark.asyncio
-async def test_an_exit_handler_that_raises_does_not_break_teardown(installed):
-    camoufox = installed(FakeCamoufox())
-    mgr = BrowserSessionManager()
-
-    async def on_exit(_profile_id):
-        raise RuntimeError("database gone")
-
-    await mgr.launch("p1", {}, on_exit=on_exit)
-    camoufox.browser.fire("close")
-    await settle(mgr)
-
-    assert mgr.is_running("p1") is False
-    assert camoufox.exits == 1
-
-
-@pytest.mark.asyncio
-async def test_a_driver_that_survived_the_close_is_killed(monkeypatch):
-    """The graceful close is the primary path; the pid is the backstop, and a
-    surviving driver process holds the profile directory open."""
-    actions = []
-
-    class FakeProcess:
-        def __init__(self, pid):
-            actions.append(("open", pid))
-
-        def terminate(self):
-            actions.append(("terminate", None))
-
-        def wait(self, timeout=None):
-            actions.append(("wait", timeout))
-
-    monkeypatch.setattr(bs.psutil, "Process", FakeProcess)
-    session = BrowserSession("p1", camoufox=FakeCamoufox(), process_id=4242)
-
-    await session.terminate()
-
-    assert actions == [("open", 4242), ("terminate", None), ("wait", 5)]
-
-
-@pytest.mark.asyncio
-async def test_a_driver_that_ignores_terminate_is_killed(monkeypatch):
-    killed = []
-
-    class StubbornProcess:
-        def __init__(self, pid):
-            pass
-
-        def terminate(self):
-            pass
-
-        def wait(self, timeout=None):
-            raise psutil.TimeoutExpired(timeout)
-
-        def kill(self):
-            killed.append(True)
-
-    monkeypatch.setattr(bs.psutil, "Process", StubbornProcess)
-    session = BrowserSession("p1", camoufox=FakeCamoufox(), process_id=4242)
-
-    await session.terminate()
-
-    assert killed == [True]
-
-
-@pytest.mark.asyncio
-async def test_a_process_that_is_already_gone_is_not_an_error(monkeypatch):
-    def gone(_pid):
-        raise psutil.NoSuchProcess(_pid)
-
-    monkeypatch.setattr(bs.psutil, "Process", gone)
-    session = BrowserSession("p1", camoufox=FakeCamoufox(), process_id=4242)
-
-    await session.terminate()  # must not raise
-
-
-@pytest.mark.asyncio
-async def test_close_all_closes_every_browser(installed):
-    installed(FakeCamoufox())
-    mgr = BrowserSessionManager()
-    for profile_id in ("p1", "p2", "p3"):
-        mgr.active_sessions[profile_id] = BrowserSession(profile_id, camoufox=FakeCamoufox())
-
-    assert await mgr.close_all() == 3
-    assert mgr.list_active() == []
-
-
-# -- Resolving a process id -----------------------------------------------------
-
-
-def test_a_process_id_is_never_fabricated():
-    """Returning a placeholder pid would make the watchdog kill an unrelated
-    process, and would start a watchdog that immediately tears the session down."""
-
-    class Opaque:
-        pass
-
-    assert _resolve_process_id(Opaque()) is None
-
-
-def test_a_process_id_is_found_through_the_nested_transport():
-    """Playwright does not expose the pid, so it is read from internals that move
-    between versions; each known shape must keep working."""
-
-    class Nested:
-        pass
-
-    obj = Nested()
-    obj.browser = Nested()
-    obj.browser._impl = Nested()
-    obj.browser._impl._connection = Nested()
-    obj.browser._impl._connection._transport = Nested()
-    obj.browser._impl._connection._transport._proc = Nested()
-    obj.browser._impl._connection._transport._proc.pid = 777
-
-    assert _resolve_process_id(obj) == 777
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("ending", ["close", "natural", "failure", "cancel"])
-@pytest.mark.parametrize("protocol", ["socks4", "socks5"])
-async def test_socks_relay_follows_session_lifetime(monkeypatch, ending, protocol):
-    from camoufox_pm.core.socks_relay import SocksRelay
-
-    relays = []
-    options_seen = []
-    started = asyncio.Event()
-    fake = FakeCamoufox()
-
-    class RecordingRelay(SocksRelay):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            relays.append(self)
-
-    async def start():
-        started.set()
-        if ending == "failure":
-            raise RuntimeError("launch failed")
-        if ending == "cancel":
-            await asyncio.Future()
-        return fake.browser
-
-    fake.start = start
-
-    def launch(**options):
-        options_seen.append(options)
-        return fake
-
-    monkeypatch.setattr(bs, "CAMOUFOX_AVAILABLE", True)
-    monkeypatch.setattr(bs, "AsyncCamoufox", launch)
-    monkeypatch.setattr(bs, "SocksRelay", RecordingRelay)
-    manager = BrowserSessionManager()
-    original = {
-        "proxy": {
-            "server": f"{protocol}://127.0.0.1:1",
-            **({"username": "user", "password": "secret"} if protocol == "socks5" else {}),
-        }
-    }
-    task = asyncio.create_task(manager.launch("p", original))
-    await started.wait()
-    if ending == "failure":
-        with pytest.raises(BrowserLaunchError):
-            await task
-    elif ending == "cancel":
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    else:
-        session = await task
-        assert session.socks_relay is relays[0]
-        if ending == "natural":
-            fake.browser.fire("close")
-            await settle(manager)
-        else:
-            assert await manager.close("p")
-    assert set(options_seen[0]["proxy"]) == {"server"}
-    assert options_seen[0]["firefox_user_prefs"]["network.proxy.socks_remote_dns"] is True
-    if protocol == "socks5":
-        assert original["proxy"]["password"] == "secret"
-    assert not manager.is_live("p")
-    assert relays[0]._closed and not relays[0]._tasks
-    with pytest.raises(OSError):
-        await asyncio.open_connection("127.0.0.1", relays[0].port)
-
-
-@pytest.mark.asyncio
-async def test_cancelled_close_drains_browser_relay_and_lease_before_untracking():
-    from unittest.mock import AsyncMock
-
-    entered = asyncio.Event()
-    finish_relay = asyncio.Event()
-
-    class PendingRelay:
-        async def close(self):
-            entered.set()
-            await finish_relay.wait()
-
-    storage = type("Storage", (), {"release_lease": AsyncMock()})()
-    manager = BrowserSessionManager(storage=storage, holder="holder")
-    camoufox = FakeCamoufox()
-    session = BrowserSession("p", camoufox, socks_relay=PendingRelay())
-    manager.active_sessions["p"] = session
-    close = asyncio.create_task(manager.close_and_release("p"))
-    await entered.wait()
-    close.cancel()
-    await asyncio.sleep(0)
-    assert manager.is_live("p")
-    assert not close.done() and not session._terminated
-    assert camoufox.exits == 0
-    storage.release_lease.assert_not_called()
-    # A second cancellation must not cancel the owned teardown either.
-    close.cancel()
-    await asyncio.sleep(0)
-    assert manager.is_live("p")
-    finish_relay.set()
-    with pytest.raises(asyncio.CancelledError):
-        await close
-    assert camoufox.exits == 1 and session._terminated
-    assert not manager.is_live("p")
-    storage.release_lease.assert_awaited_once_with("p", "holder")
-    await session.terminate()
-    assert camoufox.exits == 1
-
-
-@pytest.mark.asyncio
-async def test_cancel_during_failed_launch_cleanup_keeps_starting_until_drained(monkeypatch):
-    entered = asyncio.Event()
-    finish_relay = asyncio.Event()
-
-    class PendingRelay:
-        def __init__(self, *args):
-            pass
-
-        async def start(self):
-            pass
-
-        @property
-        def browser_proxy(self):
-            return {"server": "socks5://127.0.0.1:1"}
-
-        async def close(self):
-            entered.set()
-            await finish_relay.wait()
-
-    camoufox = FakeCamoufox(fail=RuntimeError("failed"))
-    monkeypatch.setattr(bs, "CAMOUFOX_AVAILABLE", True)
-    monkeypatch.setattr(bs, "SocksRelay", PendingRelay)
-    monkeypatch.setattr(bs, "AsyncCamoufox", lambda **kwargs: camoufox)
-    manager = BrowserSessionManager()
-    launch = asyncio.create_task(
-        manager.launch(
-            "p", {"proxy": {"server": "socks5://provider:1080", "username": "u", "password": "p"}}
-        )
+async def test_register_list_and_close_session_releases_network_and_lease():
+    storage = SimpleNamespace(
+        renew_lease=AsyncMock(return_value=1),
+        release_lease=AsyncMock(return_value=True),
     )
-    await entered.wait()
-    launch.cancel()
-    await asyncio.sleep(0)
-    assert manager.is_live("p") and not launch.done()
-    assert camoufox.exits == 0
-    finish_relay.set()
-    with pytest.raises(asyncio.CancelledError):
-        await launch
-    assert camoufox.exits == 1 and not manager.is_live("p")
+    manager = BrowserSessionManager(storage=storage, holder="holder-1")
+    net = FakeNetwork()
+
+    session = manager.register_session("p1", network=net, session_payload={"status": "ready"})
+    assert isinstance(session, BrowserSession)
+    assert net.running is True
+    assert manager.is_running("p1")
+    assert manager.is_live("p1")
+    assert len(manager.list_active()) == 1
+
+    # Idempotent registration returns the same session.
+    assert manager.register_session("p1") is session
+
+    closed = await manager.close_and_release("p1")
+    assert closed is True
+    assert net.closed == 1
+    storage.release_lease.assert_awaited_once_with("p1", "holder-1")
+    assert not manager.is_running("p1")
+    assert await manager.close_and_release("p1") is False
 
 
 @pytest.mark.asyncio
-async def test_monitor_can_initiate_shared_cleanup_without_deadlock(monkeypatch):
-    monkeypatch.setattr(psutil, "pid_exists", lambda pid: False)
+async def test_close_all_drains_all_sessions():
     manager = BrowserSessionManager()
-    camoufox = FakeCamoufox()
-    session = BrowserSession("p", camoufox)
-    manager.active_sessions["p"] = session
-    session.monitor_task = asyncio.create_task(manager._monitor("p", 123))
-    await asyncio.wait_for(asyncio.gather(session.monitor_task, return_exceptions=True), 1)
-    assert camoufox.exits == 1 and not manager.is_live("p")
+    nets = [FakeNetwork(), FakeNetwork()]
+    manager.register_session("p1", network=nets[0])
+    manager.register_session("p2", network=nets[1])
+
+    count = await manager.close_all()
+    assert count == 2
+    assert [n.closed for n in nets] == [1, 1]
+    assert manager.list_active() == []
 
 
-async def test_stopped_intent_is_durable_before_lease_release(installed):
-    from unittest.mock import AsyncMock
+@pytest.mark.asyncio
+async def test_lost_lease_during_heartbeat_releases_session_without_stealing_lease():
+    storage = SimpleNamespace(
+        renew_lease=AsyncMock(return_value=0),
+        release_lease=AsyncMock(return_value=True),
+    )
+    manager = BrowserSessionManager(storage=storage, holder="holder-1")
+    net = FakeNetwork()
+    manager.register_session("p1", network=net)
 
-    installed(FakeCamoufox())
-    events = []
+    await manager._renew_leases()
 
-    async def release(*_):
-        events.append("release")
-
-    storage = type("Storage", (), {"release_lease": AsyncMock(side_effect=release)})()
-    manager = BrowserSessionManager(storage=storage, holder="holder")
-
-    async def stopped(profile_id):
-        assert profile_id == "p"
-        events.append("persisted")
-
-    manager.on_stopped = stopped
-    await manager.launch("p", {})
-    assert await manager.close_and_release("p")
-    assert events == ["persisted", "release"]
+    assert net.closed == 1
+    assert not manager.is_running("p1")
+    # Must not release a lease that now belongs to another holder.
+    storage.release_lease.assert_not_awaited()
 
 
-async def test_failed_stopped_intent_retains_local_lease_for_retry(installed):
-    from unittest.mock import AsyncMock
+@pytest.mark.asyncio
+async def test_concurrent_close_drains_single_teardown_even_under_cancellation():
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+    calls = 0
 
-    installed(FakeCamoufox())
-    storage = type("Storage", (), {"release_lease": AsyncMock()})()
-    manager = BrowserSessionManager(storage=storage, holder="holder")
+    class SlowNetwork(FakeNetwork):
+        async def close(self) -> None:
+            nonlocal calls
+            calls += 1
+            started.set()
+            await proceed.wait()
+            await super().close()
 
-    async def stopped(_):
-        raise OSError("disk full")
+    manager = BrowserSessionManager()
+    net = SlowNetwork()
+    manager.register_session("p1", network=net)
 
-    manager.on_stopped = stopped
-    await manager.launch("p", {})
-    with pytest.raises(OSError):
-        await manager.close_and_release("p")
-    storage.release_lease.assert_not_called()
-    assert "p" in manager.active_sessions
+    task = asyncio.create_task(manager.close_and_release("p1"))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert manager.is_running("p1")  # Still tracked until teardown completes.
+    proceed.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls == 1
+    assert net.closed == 1
+    assert not manager.is_running("p1")

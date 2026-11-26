@@ -547,7 +547,7 @@ def parse_subscription(content: bytes | str) -> ParsedSubscription:
         raise SubscriptionError("invalid_yaml", "The subscription is not valid YAML.") from None
     if not isinstance(document, dict):
         raise SubscriptionError(
-            "invalid_yaml", "The subscription is not a Clash/Mihomo configuration."
+            "invalid_yaml", "The subscription is not a valid proxy configuration."
         )
     proxies = document.get("proxies")
     if not proxies:

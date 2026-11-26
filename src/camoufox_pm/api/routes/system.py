@@ -1,17 +1,14 @@
-"""API routes for system functions."""
+"""API routes for system status, storage diagnostics, and preset catalog."""
 
 import time
 from pathlib import Path
-from typing import Literal
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
 
 from camoufox_pm import __version__
-from camoufox_pm.api.access import require_admin
-from camoufox_pm.api.dependencies import get_profile_manager, get_storage_manager
+from camoufox_pm.api.dependencies import get_profile_manager
 from camoufox_pm.api.models.system import (
     ApiResponse,
     DevicePreset,
@@ -23,26 +20,18 @@ from camoufox_pm.api.models.system import (
     SystemStatusResponse,
 )
 from camoufox_pm.config import get_settings
-from camoufox_pm.core import fingerprint_store
 from camoufox_pm.core.browser_install import installed_browser
 from camoufox_pm.core.cleanup import ProfileCleanupManager
-from camoufox_pm.core.fingerprint_generator import host_os
+from camoufox_pm.core.cloud.entitlement import evaluate_entitlement
+from camoufox_pm.core.isolation import host_os
+from camoufox_pm.core.mihomo_manager import MihomoUnavailable
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter()
 
-# Application startup time, used to compute uptime.
 startup_time = time.time()
 
 
 def _cleanup_manager() -> ProfileCleanupManager:
-    """Point the cleanup at the storage this instance actually uses.
-
-    It used to be constructed with its defaults, which are ``./data`` and
-    ``./data/profiles.db`` whatever ``CPM_DB_PATH`` says. With the database
-    configured under any other name, the cleanup opened an empty one beside it,
-    concluded that every profile directory on disk was an orphan, and deleted
-    them all.
-    """
     db_path = Path(get_settings().db_path)
     return ProfileCleanupManager(str(db_path.parent), str(db_path))
 
@@ -52,10 +41,10 @@ def _cleanup_manager() -> ProfileCleanupManager:
     response_model=SystemStatusResponse,
     operation_id="get_system_status",
     summary="Get the system status.",
-    description="Get an overview of the system state.",
+    description="Real-time overview of profiles, running browsers, system resources, proxy routing engine, and active cloud policy.",
 )
 async def get_system_status():
-    """Return an overview of the system state."""
+    """Return a real-time overview of the system and runtime state."""
     try:
         profile_manager = get_profile_manager()
         profiles = await profile_manager.list_profiles()
@@ -63,15 +52,53 @@ async def get_system_status():
         active_browsers = await profile_manager.get_active_browsers()
         groups = await profile_manager.list_groups()
 
+        vmem = psutil.virtual_memory()
+        cpu_pct = float(psutil.cpu_percent(interval=None))
+        mem_used_mb = round(vmem.used / (1024 * 1024), 1)
+        mem_total_mb = round(vmem.total / (1024 * 1024), 1)
+        mem_pct = float(vmem.percent)
+        load_avg = float(psutil.getloadavg()[0]) if hasattr(psutil, "getloadavg") else 0.0
+        disk_pct = float(psutil.disk_usage("/").percent)
+
+        mihomo_available = False
+        mihomo_version: str | None = None
+        try:
+            binary = profile_manager.network.binary()
+            mihomo_available = True
+            mihomo_version = binary.version
+        except MihomoUnavailable:
+            pass
+
+        policy, policy_source = profile_manager.active_policy()
+        browser_ready, _ = installed_browser()
+        current_settings = get_settings()
+        ent = evaluate_entitlement(profile_manager.storage.db._connection)
+
         return SystemStatusResponse(
             total_profiles=len(profiles),
             active_profiles=active_profiles,
             running_browsers=len(active_browsers),
             total_groups=len(groups),
-            system_load=psutil.getloadavg()[0] if hasattr(psutil, "getloadavg") else 0.0,
-            memory_usage=psutil.virtual_memory().percent,
-            disk_usage=psutil.disk_usage("/").percent,
+            cpu_percent=cpu_pct,
+            memory_used_mb=mem_used_mb,
+            memory_total_mb=mem_total_mb,
+            memory_percent=mem_pct,
+            mihomo_available=mihomo_available,
+            mihomo_version=mihomo_version,
+            cloud_policy_source=policy_source,
+            cloud_policy_version=policy.policy_version,
+            browser_installed=browser_ready,
             uptime_seconds=int(time.time() - startup_time),
+            client_edition=current_settings.client_edition,
+            brand_name=current_settings.brand_name,
+            require_activation=bool(current_settings.require_activation),
+            entitlement_status=ent.status,
+            entitlement_tenant_name=ent.tenant_name,
+            entitlement_expires_at=ent.expires_at,
+            entitlement_days_remaining=ent.days_remaining,
+            system_load=load_avg,
+            memory_usage=mem_pct,
+            disk_usage=disk_pct,
         )
     except Exception as exc:
         logger.error(f"Failed to get system status: {exc}")
@@ -83,7 +110,6 @@ async def get_system_status():
     response_model=ProfileDiagnosticResponse,
     operation_id="diagnose_profiles",
     summary="Diagnose profile storage.",
-    description="Check profile storage health and find issues.",
 )
 async def diagnostic_profiles():
     """Diagnose profile storage health."""
@@ -114,7 +140,6 @@ async def diagnostic_profiles():
     response_model=ProfileCleanupResponse,
     operation_id="cleanup_orphaned_profiles",
     summary="Clean up orphaned profiles.",
-    description="Remove profile directories that are not present in the database.",
 )
 async def cleanup_orphaned_profiles(dry_run: bool = False):
     """Clean up orphaned profile directories."""
@@ -133,7 +158,7 @@ async def cleanup_orphaned_profiles(dry_run: bool = False):
                     message=f"Dry run: would remove {len(orphaned)} directories, create {len(missing)}",
                 )
             results = await cleanup_manager.auto_cleanup(dry_run=False)
-            freed_space = results["orphaned_removed"] * 30  # rough estimate; files already removed
+            freed_space = results["orphaned_removed"] * 30
             return ProfileCleanupResponse(
                 orphaned_removed=results["orphaned_removed"],
                 directories_created=results["directories_created"],
@@ -156,14 +181,11 @@ async def cleanup_orphaned_profiles(dry_run: bool = False):
     response_model=ApiResponse[None],
     operation_id="restart_system",
     summary="Prepare for a restart.",
-    description="Close all browsers as part of a safe restart. Does not restart the process itself.",
 )
 async def restart_system():
     """Close all browsers in preparation for a restart."""
     try:
-        profile_manager = get_profile_manager()
-        await profile_manager.close_all_browsers()
-        logger.info("System restart requested")
+        await get_profile_manager().close_all_browsers()
         return ApiResponse(
             success=True, message="Browsers closed; restart the process to continue", data=None
         )
@@ -177,16 +199,10 @@ async def restart_system():
     response_model=ApiResponse[PresetListData],
     operation_id="list_fingerprint_presets",
     summary="List real device presets.",
-    description=(
-        "Fingerprints captured from real machines, bundled with Camoufox. A profile "
-        "created from one is pinned to that device instead of a generated fingerprint."
-    ),
 )
-async def list_fingerprint_presets(
-    os: str | None = None,
-):
-    """List the available real device fingerprint presets."""
-    presets = fingerprint_store.list_presets(os)
+async def list_fingerprint_presets(os: str | None = None):
+    """List quality-filtered real device fingerprint presets."""
+    presets = await get_profile_manager().list_fingerprint_presets(os)
     return ApiResponse(
         success=True,
         message=f"{len(presets)} presets available",
@@ -201,14 +217,9 @@ async def list_fingerprint_presets(
     response_model=ApiResponse[SystemConfigData],
     operation_id="get_system_config",
     summary="Report the effective configuration.",
-    description="Report how this instance is configured. Never returns secret values.",
 )
 async def get_system_config():
-    """Return the effective configuration, reporting secrets only as set/unset.
-
-    This backs the Settings screen so users can see whether encryption and the
-    API key are on without reading environment variables.
-    """
+    """Return effective configuration without exposing secrets."""
     settings = get_settings()
     return ApiResponse(
         success=True,
@@ -219,7 +230,6 @@ async def get_system_config():
             port=settings.port,
             database_path=str(Path(settings.db_path).resolve()),
             api_key_set=bool(settings.api_key),
-            user_auth_enabled=await get_storage_manager().count_users() > 0,
             encryption_enabled=bool(settings.secret_key),
             cors_origins=settings.cors_origins,
             camoufox_available=installed_browser()[0],
@@ -234,86 +244,16 @@ async def get_system_config():
     response_model=ApiResponse[SystemInfoData],
     operation_id="get_system_info",
     summary="Get basic API information.",
-    description="Basic information about the API.",
 )
 async def get_system_info():
     """Return basic information about the API."""
     return ApiResponse(
         success=True,
-        message="噜噜指纹浏览器 API",
+        message="棱镜浏览器 API",
         data=SystemInfoData(
             name="camoufox-profile-manager",
             version=__version__,
-            description="Antidetect browser profile manager API",
+            description="Prism Browser API",
             uptime_seconds=int(time.time() - startup_time),
         ),
     )
-
-
-@router.get("/system/update-recovery", operation_id="update_recovery_status")
-async def update_recovery_status():
-    """Expose transaction progress without credential-bearing local paths."""
-    from camoufox_pm.core.update_runtime import status
-
-    try:
-        return status()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@router.post("/system/update-recovery/cancel", operation_id="cancel_update_preparation")
-async def cancel_update_preparation():
-    """Resume normal operation only before any executable replacement."""
-    from camoufox_pm.core.update_runtime import cancel
-
-    try:
-        return cancel()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-class UpdateDownloadRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    channel: Literal["stable", "preview"] = "stable"
-
-
-class UpdateActionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    transaction_id: str
-    confirm_timestamp: str | None = None
-
-
-@router.post("/system/update-recovery/download", operation_id="download_verified_update")
-async def download_verified_update(body: UpdateDownloadRequest):
-    import asyncio
-
-    from camoufox_pm.core.update_runtime import download
-
-    try:
-        return await asyncio.to_thread(download, body.channel)
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=409, detail="Verified update download unavailable") from exc
-
-
-async def _request_update_action(action, body):
-    from camoufox_pm.core.update_runtime import request
-
-    try:
-        return request(action, body.transaction_id, body.confirm_timestamp)
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@router.post("/system/update-recovery/apply", operation_id="apply_verified_update")
-async def apply_verified_update(body: UpdateActionRequest):
-    return await _request_update_action("apply", body)
-
-
-@router.post("/system/update-recovery/resume", operation_id="resume_verified_update")
-async def resume_verified_update(body: UpdateActionRequest):
-    return await _request_update_action("resume", body)
-
-
-@router.post("/system/update-recovery/rollback", operation_id="rollback_verified_update")
-async def rollback_verified_update(body: UpdateActionRequest):
-    return await _request_update_action("rollback", body)

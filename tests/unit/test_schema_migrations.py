@@ -1,8 +1,10 @@
+import json
 import sqlite3
 from contextlib import closing
 
 import pytest
 
+from camoufox_pm.core import schema_migrations
 from camoufox_pm.core.database import StorageManager
 from camoufox_pm.core.schema_migrations import CURRENT_SCHEMA
 
@@ -29,96 +31,36 @@ async def test_baseline_migration_numbered_and_retryable(tmp_path):
         await storage.initialize()
         await storage.close()
     with closing(sqlite3.connect(path)) as db, db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA
+        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 9
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 @pytest.mark.asyncio
-async def test_stage_two_existing_accounts_become_administrators(tmp_path):
-    path = tmp_path / "legacy.sqlite"
-    storage = StorageManager(str(path))
-    await storage.initialize()
-    await storage.close()
-    with closing(sqlite3.connect(path)) as db, db:
-        db.execute("DROP TABLE profile_grants")
-        db.execute("DROP TABLE audit_events")
-        db.execute("ALTER TABLE users DROP COLUMN role")
-        db.execute("ALTER TABLE schedules DROP COLUMN actor_kind")
-        db.execute("ALTER TABLE schedules DROP COLUMN actor_username")
-        db.execute("ALTER TABLE schedules DROP COLUMN actor_user_id")
-        db.execute(
-            "INSERT INTO users(id,username,password_hash,created_at) VALUES ('existing','host-owner','hash','2026-01-01')"
-        )
-        db.execute("PRAGMA user_version=1")
-    storage = StorageManager(str(path))
-    await storage.initialize()
-    assert (await storage.get_user_by_username("host-owner"))["role"] == "administrator"
-    await storage.close()
-    with closing(sqlite3.connect(path)) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA
-
-
-@pytest.mark.asyncio
-async def test_partial_schedule_actor_migration_resumes(tmp_path):
-    path = tmp_path / "partial.sqlite"
-    storage = StorageManager(str(path))
-    await storage.initialize()
-    await storage.close()
-    with closing(sqlite3.connect(path)) as db, db:
-        db.execute("ALTER TABLE schedules DROP COLUMN actor_username")
-        db.execute("ALTER TABLE schedules DROP COLUMN actor_user_id")
-        db.execute("PRAGMA user_version=1")
-    storage = StorageManager(str(path))
-    await storage.initialize()
-    assert await storage.list_schedules() == []
-    await storage.close()
-    with closing(sqlite3.connect(path)) as db:
-        columns = {row[1] for row in db.execute("PRAGMA table_info(schedules)")}
-        assert {"actor_username", "actor_user_id"} <= columns
-
-
-@pytest.mark.asyncio
-async def test_sync_schema_refuses_pre_sync_manager(tmp_path, monkeypatch):
-    from camoufox_pm.core import schema_migrations
-
-    path = tmp_path / "sync.sqlite"
+async def test_v8_feature_refuses_older_manager(tmp_path, monkeypatch):
+    path = tmp_path / "v8.sqlite"
     storage = StorageManager(str(path))
     await storage.initialize()
     await storage.close()
     with closing(sqlite3.connect(path)) as db:
         assert (
             db.execute(
-                "SELECT version FROM manager_features WHERE feature='sync-admission'"
+                "SELECT version FROM manager_features WHERE feature='isolation-cloud'"
             ).fetchone()[0]
             == 1
         )
-        monkeypatch.setattr(schema_migrations, "CURRENT_SCHEMA", 2)
-        with pytest.raises(ValueError, match="newer manager"):
-            schema_migrations.check_schema(db)
-
-
-@pytest.mark.asyncio
-async def test_lifecycle_schema_refuses_pre_lifecycle_manager(tmp_path, monkeypatch):
-    from camoufox_pm.core import schema_migrations
-
-    path = tmp_path / "lifecycle.sqlite"
-    storage = StorageManager(str(path))
-    await storage.initialize()
-    await storage.close()
-    with closing(sqlite3.connect(path)) as db:
         assert (
             db.execute(
-                "SELECT version FROM manager_features WHERE feature='sync-lifecycle'"
+                "SELECT version FROM manager_features WHERE feature='exit-ip-drift-guard'"
             ).fetchone()[0]
             == 1
         )
-        monkeypatch.setattr(schema_migrations, "CURRENT_SCHEMA", 3)
+        monkeypatch.setattr(schema_migrations, "CURRENT_SCHEMA", 8)
         with pytest.raises(ValueError, match="newer manager"):
             schema_migrations.check_schema(db)
 
 
 @pytest.mark.asyncio
-async def test_schema_five_databases_gain_the_network_tables_once(tmp_path):
+async def test_schema_five_databases_gain_network_and_cloud_tables(tmp_path):
     from camoufox_pm.core.models import Profile
 
     path = tmp_path / "v5.sqlite"
@@ -137,19 +79,26 @@ async def test_schema_five_databases_gain_the_network_tables_once(tmp_path):
     with closing(sqlite3.connect(path)) as db, db:
         for table in network_tables:
             db.execute(f"DROP TABLE {table}")
-        db.execute("DELETE FROM manager_features WHERE feature='network-nodes'")
+        db.execute("DROP TABLE cloud_settings")
+        db.execute("DROP TABLE cloud_cache")
+        db.execute(
+            "DELETE FROM manager_features WHERE feature IN ('network-nodes', 'isolation-cloud')"
+        )
         db.execute("PRAGMA user_version=5")
     for _ in range(2):  # resumable and idempotent
         storage = StorageManager(str(path))
         await storage.initialize()
         await storage.close()
     with closing(sqlite3.connect(path)) as db, db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 7
+        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 9
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert set(network_tables) <= tables
+        assert set(network_tables) | {"cloud_settings", "cloud_cache"} <= tables
         assert db.execute(
             "SELECT version FROM manager_features WHERE feature='network-nodes'"
         ).fetchone() == (2,)
+        assert db.execute(
+            "SELECT version FROM manager_features WHERE feature='isolation-cloud'"
+        ).fetchone() == (1,)
         assert db.execute("SELECT name FROM profiles").fetchall() == [("Existing",)]
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -189,10 +138,10 @@ async def test_schema_six_rebuild_keeps_subscriptions_and_allows_manual_groups(t
     await storage.close()
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("PRAGMA foreign_keys = ON")
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
-        assert db.execute("SELECT id, name FROM network_subscriptions").fetchall() == [
-            ("s1", "Airport")
-        ]
+        assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA == 9
+        assert db.execute(
+            "SELECT id, name, managed_by, cloud_source_id FROM network_subscriptions"
+        ).fetchall() == [("s1", "Airport", "local", None)]
         assert db.execute("SELECT subscription_id FROM network_nodes").fetchall() == [("s1",)]
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         db.execute(
@@ -203,3 +152,112 @@ async def test_schema_six_rebuild_keeps_subscriptions_and_allows_manual_groups(t
         # Cascades still work after the rebuild.
         db.execute("DELETE FROM network_subscriptions WHERE id='s1'")
         assert db.execute("SELECT COUNT(*) FROM network_nodes").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_schema_seven_migrates_to_eight_with_legacy_isolation_backfill(tmp_path):
+    path = tmp_path / "v7.sqlite"
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    await storage.close()
+    stamp = "2026-11-01T00:00:00+00:00"
+    legacy_pin = {
+        "navigator.userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0",
+        "navigator.platform": "MacIntel",
+        "screen.width": 1440,
+        "screen.height": 900,
+        "navigator.hardwareConcurrency": 8,
+        "webGl:renderer": "Apple M2",
+    }
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("DROP TABLE cloud_settings")
+        db.execute("DROP TABLE cloud_cache")
+        db.execute("DROP INDEX IF EXISTS idx_profiles_fingerprint_hash")
+        db.execute("DROP INDEX IF EXISTS idx_network_subscriptions_cloud_source")
+        db.execute("ALTER TABLE profiles DROP COLUMN isolation_config")
+        db.execute("ALTER TABLE profiles DROP COLUMN fingerprint_hash")
+        db.execute("ALTER TABLE profiles DROP COLUMN cloud_revision")
+        db.execute("ALTER TABLE profiles DROP COLUMN cloud_synced_at")
+        db.execute("ALTER TABLE network_subscriptions DROP COLUMN managed_by")
+        db.execute("ALTER TABLE network_subscriptions DROP COLUMN cloud_source_id")
+        db.execute(
+            "INSERT INTO profiles (id, name, status, browser_settings, fingerprint, storage_path, "
+            "created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?, ?, ?)",
+            (
+                "legacy01",
+                "Legacy Profile",
+                json.dumps({"os": "macos", "languages": ["en-US", "en"]}),
+                json.dumps(legacy_pin),
+                str(tmp_path / "profiles" / "legacy01"),
+                stamp,
+                stamp,
+            ),
+        )
+        db.execute(
+            "INSERT INTO network_subscriptions (id, name, source_kind, created_at, updated_at) "
+            "VALUES ('sub7', 'Local v7', 'file', ?, ?)",
+            (stamp, stamp),
+        )
+        db.execute("DELETE FROM manager_features WHERE feature='isolation-cloud'")
+        db.execute("PRAGMA user_version=7")
+
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    profile = await storage.get_profile("legacy01")
+    await storage.close()
+
+    assert profile is not None
+    assert profile.fingerprint_hash and profile.fingerprint_hash.startswith("FP-")
+    assert profile.isolation_config is not None
+    assert profile.isolation_config["fingerprint_hash"] == profile.fingerprint_hash
+    assert profile.isolation_config["os"] == "macos"
+    with closing(sqlite3.connect(path)) as db, db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
+        row = db.execute(
+            "SELECT managed_by, cloud_source_id FROM network_subscriptions WHERE id='sub7'"
+        ).fetchone()
+        assert row == ("local", None)
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"cloud_settings", "cloud_cache"} <= tables
+
+
+@pytest.mark.asyncio
+async def test_schema_eight_migrates_to_nine_with_ip_drift_guard_defaults(tmp_path):
+    path = tmp_path / "v8_to_v9.sqlite"
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    await storage.close()
+    stamp = "2026-11-20T00:00:00+00:00"
+    with closing(sqlite3.connect(path)) as db, db:
+        for col in ("last_exit_ip", "last_exit_country", "last_exit_at", "ip_drift_guard"):
+            db.execute(f"ALTER TABLE profiles DROP COLUMN {col}")
+        db.execute("DELETE FROM manager_features WHERE feature='exit-ip-drift-guard'")
+        db.execute(
+            "INSERT INTO profiles (id, name, status, browser_settings, storage_path, "
+            "created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?, ?)",
+            (
+                "v8prof01",
+                "V8 Profile",
+                json.dumps({"os": "macos", "languages": ["en-US", "en"]}),
+                str(tmp_path / "profiles" / "v8prof01"),
+                stamp,
+                stamp,
+            ),
+        )
+        db.execute("PRAGMA user_version=8")
+
+    storage = StorageManager(str(path))
+    await storage.initialize()
+    profile = await storage.get_profile("v8prof01")
+    await storage.close()
+
+    assert profile is not None
+    assert profile.ip_drift_guard is True
+    assert profile.last_exit_ip is None
+    assert profile.last_exit_country is None
+    assert profile.last_exit_at is None
+    with closing(sqlite3.connect(path)) as db, db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert db.execute(
+            "SELECT version FROM manager_features WHERE feature='exit-ip-drift-guard'"
+        ).fetchone() == (1,)

@@ -19,6 +19,8 @@ the profile would tell a page.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import re
 import ssl
 import time
 from collections.abc import Awaitable, Callable
@@ -27,14 +29,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpcore
 import httpx
-from camoufox.ip import valid_ipv4, valid_ipv6
 from loguru import logger
 
+from . import geoip
 from .models import (
     BrowserSettings,
     Level,
@@ -43,8 +45,62 @@ from .models import (
     ProxyConfig,
     ProxyType,
 )
-from .proxy_import import normalize_proxy_server
 from .socks_relay import SocksRelay, validate_credentials
+
+
+def valid_ipv4(value: str) -> bool:
+    try:
+        ipaddress.IPv4Address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def valid_ipv6(value: str) -> bool:
+    try:
+        ipaddress.IPv6Address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_proxy_server(server: str) -> str:
+    """Return canonical host:port, requiring brackets around IPv6 addresses."""
+    if not server or any(char.isspace() or ord(char) < 32 for char in server):
+        raise ValueError("Server must contain a host and port without whitespace.")
+    if any(char in server for char in "/?#@%\\"):
+        raise ValueError("Server must contain only a host and port.")
+    if not re.fullmatch(r"(?:\[[0-9a-fA-F:.]+\]|[^:\[\]]+):[0-9]+", server):
+        raise ValueError("Server must use host:port or [IPv6]:port.")
+    try:
+        parsed = urlsplit("//" + server)
+        host, port = parsed.hostname, parsed.port
+    except ValueError:
+        raise ValueError("Server must contain a valid host and port.") from None
+    if not host or port is None or not 1 <= port <= 65535:
+        raise ValueError("Server requires an explicit port between 1 and 65535.")
+    if ":" in host:
+        try:
+            host = "[" + ipaddress.IPv6Address(host).compressed + "]"
+        except ValueError:
+            raise ValueError("Invalid IPv6 server address.") from None
+    else:
+        try:
+            host = host.rstrip(".").encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            raise ValueError("Invalid server hostname.") from None
+        if len(host) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.split(".")
+        ):
+            raise ValueError("Invalid server hostname.")
+        if re.fullmatch(r"[0-9.]+", host) and "." in host:
+            try:
+                host = str(ipaddress.IPv4Address(host))
+            except ValueError:
+                raise ValueError("Invalid IPv4 server address.") from None
+    return f"{host}:{port}"
+
 
 # Three of the endpoints Camoufox asks for the exit address, so a check sees the
 # address the browser will. We make the request ourselves rather than calling
@@ -89,10 +145,11 @@ class LocationUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class ProxyLocation:
-    """Where a proxy actually comes out, as the browser's own database sees it."""
+    """Where a proxy actually comes out, as the local GeoIP database sees it."""
 
     ip: str
     country: str | None = None
+    city: str | None = None
     timezone: str | None = None
     latitude: float | None = None
     longitude: float | None = None
@@ -205,30 +262,23 @@ def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def locate(ip: str) -> ProxyLocation:
-    """Place an address using the database Camoufox itself uses at launch.
+    """Place an address using the local offline MaxMind GeoIP database.
 
     Raises LocationUnavailable when the database is missing or does not know the
     address, so the caller can still report a working proxy it cannot place.
     """
-    try:
-        from camoufox.geolocation import get_geolocation
-    except ImportError as exc:  # pragma: no cover - the geoip extra is a hard dependency
-        raise LocationUnavailable(str(exc)) from exc
-
-    try:
-        geo = get_geolocation(ip)
-    except Exception as exc:
-        raise LocationUnavailable(str(exc)) from exc
-
-    # Only the region is taken from geo.locale. Its language is sampled
-    # statistically for that region, so the same address answered "de-BG" and then
-    # "bg-BG" — not something to report as a fact about the proxy.
+    record_ = geoip.lookup(ip)
+    if record_ is None or not (record_.country or record_.timezone or record_.latitude is not None):
+        raise LocationUnavailable(
+            f"Address {ip} could not be resolved in the offline GeoIP database"
+        )
     return ProxyLocation(
         ip=ip,
-        country=geo.locale.region,
-        timezone=geo.timezone,
-        latitude=geo.latitude,
-        longitude=geo.longitude,
+        country=record_.country,
+        city=record_.city,
+        timezone=record_.timezone,
+        latitude=record_.latitude,
+        longitude=record_.longitude,
     )
 
 
@@ -576,8 +626,7 @@ async def check(
             Finding(
                 "info",
                 "proxy",
-                "The proxy works, but its address could not be placed on the map. "
-                "Run 'camoufox fetch' to install the location database.",
+                "The proxy works, but its address could not be placed in the offline GeoIP database.",
             )
         )
         return ProxyCheckResult(

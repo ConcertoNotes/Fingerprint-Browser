@@ -95,16 +95,21 @@ def _executable_name() -> str:
 
 def candidate_paths(configured: str | None, data_dir: Path | None) -> list[Path]:
     """Where a binary may come from, most explicit first."""
+    from . import bundled_runtime
+
     candidates: list[Path] = []
     for value in (configured, os.environ.get("CPM_MIHOMO_PATH")):
         if value:
             candidates.append(Path(value).expanduser())
+    if data_dir is not None:
+        candidates.append(Path(data_dir) / "bin" / _executable_name())
+    runtime_root = bundled_runtime.bundled_runtime_dir()
+    if runtime_root is not None:
+        candidates.append(runtime_root / "bin" / _executable_name())
     bundle = getattr(sys, "_MEIPASS", None)
     if bundle:
         candidates.append(Path(bundle) / "mihomo" / _executable_name())
-    if data_dir is not None:
-        candidates.append(Path(data_dir) / "bin" / _executable_name())
-    # Source checkouts: scripts/prepare_mihomo.py installs here (git-ignored).
+    # Source checkouts cache the downloaded engine binary under .cache/mihomo.
     candidates.append(
         Path(__file__).resolve().parents[3] / ".cache" / "mihomo" / _executable_name()
     )
@@ -120,28 +125,32 @@ def validate_binary(path: Path) -> MihomoBinary:
         resolved = path.resolve(strict=True)
         info = resolved.stat()
     except (OSError, RuntimeError):
-        raise MihomoUnavailable("binary_missing", "The Mihomo executable was not found.") from None
+        raise MihomoUnavailable(
+            "binary_missing", "The proxy routing engine executable was not found."
+        ) from None
     if not stat.S_ISREG(info.st_mode):
-        raise MihomoUnavailable("binary_invalid", "The Mihomo path is not a regular file.")
+        raise MihomoUnavailable(
+            "binary_invalid", "The proxy routing engine path is not a regular file."
+        )
     if os.name != "nt":
         if info.st_mode & (stat.S_ISUID | stat.S_ISGID):
-            # A setuid engine would run each profile's proxy with its owner's
-            # privileges, and its children could not be stopped by this manager.
             raise MihomoUnavailable(
                 "binary_setuid",
-                "This Mihomo executable is setuid/setgid. Copy it with "
-                "scripts/prepare_mihomo.py, which installs a normal user-owned copy.",
+                "This proxy routing engine executable has elevated setuid/setgid permissions "
+                "and cannot be used safely. Use the bundled engine or a standard user-owned binary.",
             )
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise MihomoUnavailable(
-                "binary_writable", "The Mihomo executable is writable by other users."
+                "binary_writable", "The proxy routing engine executable is writable by other users."
             )
         if info.st_uid not in (os.geteuid(), 0):
             raise MihomoUnavailable(
-                "binary_owner", "The Mihomo executable is owned by another user."
+                "binary_owner", "The proxy routing engine executable is owned by another user."
             )
         if not os.access(resolved, os.X_OK):
-            raise MihomoUnavailable("binary_invalid", "The Mihomo file is not executable.")
+            raise MihomoUnavailable(
+                "binary_invalid", "The proxy routing engine file is not executable."
+            )
     key = (str(resolved), info.st_size, int(info.st_mtime))
     if key in _binary_cache:
         return _binary_cache[key]
@@ -155,15 +164,19 @@ def validate_binary(path: Path) -> MihomoBinary:
             **_creation_flags(),
         )
     except (OSError, subprocess.TimeoutExpired):
-        raise MihomoUnavailable("binary_invalid", "The Mihomo executable did not run.") from None
+        raise MihomoUnavailable(
+            "binary_invalid", "The proxy routing engine executable did not run."
+        ) from None
     match = _VERSION.search(result.stdout.decode("utf-8", "replace"))
     if not match:
-        raise MihomoUnavailable("binary_invalid", "The file does not report a Mihomo version.")
+        raise MihomoUnavailable(
+            "binary_invalid", "The file does not report a valid proxy routing engine version."
+        )
     version = tuple(int(part) for part in match.groups())
     if version < MIN_VERSION:
         raise MihomoUnavailable(
             "binary_outdated",
-            f"Mihomo {'.'.join(map(str, version))} is too old; "
+            f"Proxy routing engine {'.'.join(map(str, version))} is too old; "
             f"{'.'.join(map(str, MIN_VERSION))} or newer is required.",
         )
     binary = MihomoBinary(resolved, ".".join(map(str, version)))
@@ -172,8 +185,17 @@ def validate_binary(path: Path) -> MihomoBinary:
 
 
 def discover_binary(configured: str | None, data_dir: Path | None) -> MihomoBinary:
+    from . import bundled_runtime
+
     last: MihomoUnavailable | None = None
     explicit = bool(configured or os.environ.get("CPM_MIHOMO_PATH"))
+    if not explicit:
+        try:
+            extracted = bundled_runtime.ensure_bundled_mihomo(data_dir)
+            if extracted is not None and extracted.exists():
+                return validate_binary(extracted)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not initialize bundled proxy routing engine: {exc}")
     for index, candidate in enumerate(candidate_paths(configured, data_dir)):
         if not candidate.exists():
             continue
@@ -186,8 +208,7 @@ def discover_binary(configured: str | None, data_dir: Path | None) -> MihomoBina
             last = exc
     raise last or MihomoUnavailable(
         "binary_missing",
-        "Mihomo is not installed. Set its path in Settings → Network, or run "
-        "scripts/prepare_mihomo.py.",
+        "Proxy routing engine is not ready. Reinstall Prism Browser or set a custom binary path in Settings.",
     )
 
 
@@ -195,6 +216,13 @@ def discover_binary(configured: str | None, data_dir: Path | None) -> MihomoBina
 
 
 def runtime_config(outbounds: dict[str, dict[str, Any]], listeners: list[Listener]) -> dict:
+    # A profile runtime has one outbound.  The ``#outbound`` suffix is Mihomo's
+    # explicit proxy selector for DNS requests; without it, the DNS resolver
+    # itself uses DIRECT and leaks destination lookups outside the node.
+    dns_outbound = next(iter(outbounds), None)
+    if not dns_outbound:
+        raise ValueError("A runtime needs an outbound for DNS routing")
+    proxied_nameservers = [f"{server}#{dns_outbound}" for server in DNS_NAMESERVERS]
     config = {
         "allow-lan": False,
         "bind-address": "127.0.0.1",
@@ -215,7 +243,7 @@ def runtime_config(outbounds: dict[str, dict[str, Any]], listeners: list[Listene
             "enhanced-mode": "redir-host",
             "use-hosts": False,
             "default-nameserver": ["223.5.5.5", "1.1.1.1"],
-            "nameserver": list(DNS_NAMESERVERS),
+            "nameserver": proxied_nameservers,
             "proxy-server-nameserver": list(DNS_PROXY_SERVER_NAMESERVERS),
         },
         "proxies": [{**outbound, "name": name} for name, outbound in outbounds.items()],
@@ -339,7 +367,7 @@ def classify_log(lines: list[str]) -> tuple[str, str] | None:
         (
             "port_conflict",
             ("address already in use", "only one usage of each socket"),
-            "A local port was taken while Mihomo started.",
+            "A local port was taken while the proxy routing engine started.",
         ),
         (
             "config_invalid",
@@ -351,7 +379,7 @@ def classify_log(lines: list[str]) -> tuple[str, str] | None:
                 "proxy not found",
                 "unsupported type",
             ),
-            "Mihomo rejected the node configuration.",
+            "The proxy routing engine rejected the node configuration.",
         ),
         (
             "node_auth_failed",
@@ -399,7 +427,58 @@ class _Owner:
     manager_started: float
     pid: int
     pid_started: float
-    config: str
+    workdir: str = ""
+    config: str = ""
+
+
+_REDACTED_OUTBOUND_KEYS = frozenset(
+    {
+        "password",
+        "uuid",
+        "psk",
+        "private-key",
+        "auth",
+        "auth-str",
+        "token",
+        "obfs-password",
+        "pre-shared-key",
+        "username",
+        "server",
+        "servername",
+        "sni",
+        "host",
+        "public-key",
+        "short-id",
+        "path",
+        "service-name",
+    }
+)
+
+
+async def _shred_file(path: Path, *, retries: int = 5, delay: float = 0.1) -> None:
+    """Overwrite ``path`` with zero bytes, fsync, and unlink (retrying for Windows handles)."""
+    if not path.exists():
+        return
+    for attempt in range(retries):
+        try:
+            size = max(path.stat().st_size, 1)
+            with open(path, "r+b") as handle:
+                handle.seek(0)
+                handle.write(b"\x00" * size)
+                handle.flush()
+                os.fsync(handle.fileno())
+            path.unlink(missing_ok=True)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if attempt + 1 < retries:
+                await asyncio.sleep(delay)
+                continue
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            if path.exists():
+                logger.warning(f"Could not shred transient runtime config ({type(exc).__name__})")
 
 
 class MihomoProcess:
@@ -448,7 +527,7 @@ class MihomoProcess:
         raise last
 
     async def _start_once(self, ports: list[int] | None) -> None:
-        from .update_permissions import create_private_directory, create_private_file
+        from .fs_permissions import create_private_directory, create_private_file
 
         self.runtime_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Resolved so platform aliases (macOS /var → /private/var) are not
@@ -498,8 +577,13 @@ class MihomoProcess:
             **_creation_flags(),
         )
         self._reader = asyncio.create_task(self._read_output(self.process))
-        self._write_owner(config_path)
-        await self._wait_ready()
+        self._write_owner()
+        try:
+            await self._wait_ready()
+        except Exception:
+            await _shred_file(config_path)
+            raise
+        await _shred_file(config_path)
         self.started_at = time.time()
         self._waiter = asyncio.create_task(self._watch_exit(self.process))
 
@@ -520,24 +604,14 @@ class MihomoProcess:
         def walk(value: Any) -> None:
             if isinstance(value, dict):
                 for key, item in value.items():
-                    if (
-                        key
-                        in {
-                            "password",
-                            "uuid",
-                            "psk",
-                            "private-key",
-                            "auth",
-                            "auth-str",
-                            "token",
-                            "obfs-password",
-                            "pre-shared-key",
-                            "username",
-                        }
-                        and isinstance(item, str)
-                        and len(item) >= 4
-                    ):
-                        values.append(item)
+                    key_lower = key.lower() if isinstance(key, str) else ""
+                    if key_lower in _REDACTED_OUTBOUND_KEYS:
+                        if isinstance(item, str) and len(item) >= 3:
+                            values.append(item)
+                        elif isinstance(item, list):
+                            for elem in item:
+                                if isinstance(elem, str) and len(elem) >= 3:
+                                    values.append(elem)
                     walk(item)
             elif isinstance(value, list):
                 for item in value:
@@ -546,20 +620,20 @@ class MihomoProcess:
         walk(self.outbounds)
         return sorted(set(values), key=len, reverse=True)
 
-    def _write_owner(self, config_path: Path) -> None:
+    def _write_owner(self, _config_path: Path | None = None) -> None:
         assert self.workdir is not None and self.process is not None
         try:
             child_started = psutil.Process(self.process.pid).create_time()
         except psutil.Error:
             child_started = 0.0
-        owner = _Owner(
-            manager_pid=os.getpid(),
-            manager_started=psutil.Process(os.getpid()).create_time(),
-            pid=self.process.pid,
-            pid_started=child_started,
-            config=str(config_path),
-        )
-        (self.workdir / "owner.json").write_text(json.dumps(owner.__dict__))
+        payload = {
+            "manager_pid": os.getpid(),
+            "manager_started": psutil.Process(os.getpid()).create_time(),
+            "pid": self.process.pid,
+            "pid_started": child_started,
+            "workdir": str(self.workdir),
+        }
+        (self.workdir / "owner.json").write_text(json.dumps(payload))
 
     async def _wait_ready(self) -> None:
         assert self.process is not None
@@ -583,8 +657,12 @@ class MihomoProcess:
         if classified and classified[0] in {"port_conflict", "config_invalid"}:
             raise MihomoUnavailable(*classified)
         if self.process.returncode is not None:
-            raise MihomoUnavailable("engine_exited", "Mihomo stopped while starting.")
-        raise MihomoUnavailable("engine_timeout", "Mihomo did not become ready in time.")
+            raise MihomoUnavailable(
+                "engine_exited", "The proxy routing engine stopped while starting."
+            )
+        raise MihomoUnavailable(
+            "engine_timeout", "The proxy routing engine did not become ready in time."
+        )
 
     async def _watch_exit(self, process: asyncio.subprocess.Process) -> int:
         code = await process.wait()
@@ -675,8 +753,18 @@ def reap_orphans(runtime_root: Path) -> int:
         if not directory.is_dir() or directory.is_symlink():
             continue
         try:
-            owner = _Owner(**json.loads(owner_path.read_text()))
-        except (OSError, ValueError, TypeError):
+            raw_owner = json.loads(owner_path.read_text())
+            if not isinstance(raw_owner, dict):
+                raise TypeError("owner.json must be a JSON object")
+            owner = _Owner(
+                manager_pid=int(raw_owner["manager_pid"]),
+                manager_started=float(raw_owner["manager_started"]),
+                pid=int(raw_owner["pid"]),
+                pid_started=float(raw_owner["pid_started"]),
+                workdir=str(raw_owner.get("workdir") or ""),
+                config=str(raw_owner.get("config") or ""),
+            )
+        except (OSError, ValueError, TypeError, KeyError):
             owner = None
             try:
                 # Another live manager may have created it a moment ago and not
@@ -690,7 +778,8 @@ def reap_orphans(runtime_root: Path) -> int:
         if owner is not None and _process_matches(owner.pid, owner.pid_started):
             try:
                 process = psutil.Process(owner.pid)
-                if owner.config in " ".join(process.cmdline()):
+                marker = owner.workdir or owner.config
+                if marker and marker in " ".join(process.cmdline()):
                     process.terminate()
                     try:
                         process.wait(3)

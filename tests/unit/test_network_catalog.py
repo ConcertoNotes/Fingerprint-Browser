@@ -76,7 +76,8 @@ async def test_secrets_are_sealed_and_never_returned(catalog):
 
 
 @pytest.mark.asyncio
-async def test_nothing_is_stored_without_an_encryption_key(profile_manager, monkeypatch):
+async def test_nothing_is_stored_without_an_encryption_key(profile_manager, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CPM_SECRET_KEY", raising=False)
     get_settings.cache_clear()
     catalog = NetworkCatalog(profile_manager)
@@ -222,12 +223,11 @@ async def test_unbound_subscriptions_are_deleted_with_their_nodes(catalog):
 
 
 @pytest.mark.asyncio
-async def test_permanently_deleting_a_profile_cascades_its_binding(catalog, profile_manager):
+async def test_deleting_a_profile_cascades_its_binding(catalog, profile_manager):
     await catalog.create_subscription("S", content=doc(("A", "a.example", 1, SECRET)))
     profile, _ = await bind(profile_manager, catalog)
-    await profile_manager.delete_profile(profile.id)  # Trash keeps the binding
     assert raw(catalog, "SELECT COUNT(*) FROM profile_network_bindings") == [(1,)]
-    assert await profile_manager.permanently_delete_profile(profile.id)
+    assert await profile_manager.delete_profile(profile.id)
     assert raw(catalog, "SELECT COUNT(*) FROM profile_network_bindings") == [(0,)]
 
 

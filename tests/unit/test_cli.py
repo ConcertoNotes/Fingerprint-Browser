@@ -83,11 +83,11 @@ def test_a_real_address_is_opened_as_itself(run):
 
 
 def test_desktop_mode_hands_over_instead_of_serving_here(run, monkeypatch):
-    """run_desktop starts its own server; starting a second one would take the port."""
-    from camoufox_pm import desktop
+    """--desktop delegates to the headless Prism sidecar entrypoint."""
+    from camoufox_pm import sidecar
 
     asked: list[dict] = []
-    monkeypatch.setattr(desktop, "run_desktop", lambda **kw: asked.append(kw))
+    monkeypatch.setattr(sidecar, "run_sidecar", lambda **kw: asked.append(kw))
 
     started = run("--desktop", "--port", "9123")
 
@@ -96,105 +96,33 @@ def test_desktop_mode_hands_over_instead_of_serving_here(run, monkeypatch):
     assert started["timers"] == []
 
 
-# --- `camoufox-pm user ...` ---------------------------------------------------
+def test_leases_and_unlock_commands(monkeypatch, tmp_path, capsys):
+    from camoufox_pm.core.database import StorageManager
+    from camoufox_pm.core.models import Profile
 
-
-@pytest.fixture
-def run_user(monkeypatch, tmp_path):
-    """Run a ``user`` subcommand against a throwaway database, with password
-    prompts answered from a scripted list."""
-
-    monkeypatch.setenv("CPM_DB_PATH", str(tmp_path / "cli.db"))
+    db_path = tmp_path / "leases.db"
+    monkeypatch.setenv("CPM_DB_PATH", str(db_path))
     monkeypatch.setattr(cli.uvicorn, "run", lambda *a, **k: pytest.fail("must not serve"))
 
-    def invoke(*args: str, prompts: list[str] | None = None):
-        answers = list(prompts or [])
-        monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": answers.pop(0))
-        monkeypatch.setattr(sys, "argv", ["camoufox-pm", "user", *args])
-        get_settings.cache_clear()
-        try:
-            cli.main()
-        finally:
-            get_settings.cache_clear()
-
-    yield invoke
-
-
-async def _usernames(tmp_path) -> list[str]:
-    from camoufox_pm.core.database import StorageManager
-
-    storage = StorageManager(str(tmp_path / "cli.db"))
-    await storage.initialize()
-    try:
-        return [user["username"] for user in await storage.list_users()]
-    finally:
+    async def seed():
+        storage = StorageManager(str(db_path))
+        await storage.initialize()
+        p = Profile(id="p1", name="Leased")
+        await storage.save_profile(p)
+        await storage.acquire_lease("p1", "host-a:1234", 300)
         await storage.close()
 
+    asyncio.run(seed())
 
-def test_user_add_creates_the_account(run_user, tmp_path):
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-
-    assert asyncio.run(_usernames(tmp_path)) == ["alice"]
-
-
-def test_user_add_rejects_a_short_password(run_user, tmp_path):
-    with pytest.raises(SystemExit):
-        run_user("add", "alice", prompts=["short", "short"])
-
-    assert asyncio.run(_usernames(tmp_path)) == []
-
-
-def test_user_add_rejects_mismatched_prompts(run_user, tmp_path):
-    with pytest.raises(SystemExit):
-        run_user("add", "alice", prompts=["one-password-8", "another-password"])
-
-
-def test_user_add_refuses_a_duplicate(run_user):
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-    with pytest.raises(SystemExit):
-        run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-
-
-def test_user_remove_deletes_the_account(run_user, tmp_path):
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-    run_user("add", "backup", prompts=["hunter22-long", "hunter22-long"])
-    run_user("remove", "alice")
-
-    assert asyncio.run(_usernames(tmp_path)) == ["backup"]
-
-
-def test_user_list_shows_names_and_never_hashes(run_user, capsys):
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-    run_user("list")
-
+    monkeypatch.setattr(sys, "argv", ["camoufox-pm", "leases"])
+    get_settings.cache_clear()
+    cli.main()
     out = capsys.readouterr().out
-    assert "alice" in out
-    assert "argon2" not in out
-    assert "hunter22-long" not in out
+    assert "p1" in out and "host-a:1234" in out
 
-
-def test_user_passwd_changes_the_password(run_user, tmp_path):
-    from camoufox_pm.core import auth
-    from camoufox_pm.core.database import StorageManager
-
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-    run_user("passwd", "alice", prompts=["new-password-9", "new-password-9"])
-
-    async def check() -> bool:
-        storage = StorageManager(str(tmp_path / "cli.db"))
-        await storage.initialize()
-        try:
-            user = await storage.get_user_by_username("alice")
-            assert user is not None
-            return auth.verify_password(user["password_hash"], "new-password-9")
-        finally:
-            await storage.close()
-
-    assert asyncio.run(check())
-
-
-def test_user_remove_refuses_last_administrator(run_user, tmp_path):
-    run_user("add", "alice", prompts=["hunter22-long", "hunter22-long"])
-    with pytest.raises(SystemExit):
-        run_user("remove", "alice")
-    assert asyncio.run(_usernames(tmp_path)) == ["alice"]
+    monkeypatch.setattr(sys, "argv", ["camoufox-pm", "unlock", "p1", "--yes"])
+    get_settings.cache_clear()
+    cli.main()
+    out = capsys.readouterr().out
+    assert "released" in out.lower()
+    get_settings.cache_clear()

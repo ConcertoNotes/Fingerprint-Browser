@@ -2,12 +2,28 @@
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from camoufox_pm.core.models import Profile, ProfileStatus, ProfileTags, ProxyCheckRecord
 from camoufox_pm.core.proxy_check import Level, ProxyCheckResult
+
+
+class IsolationInput(BaseModel):
+    """Optional isolation overrides when creating or updating a profile."""
+
+    os: Literal["macos", "windows", "linux"] | None = None
+    tier: Literal["strict", "standard"] | None = None
+    preset_id: str | None = None
+    webrtc_policy: Literal["block", "spoof_exit"] | None = None
+    canvas_policy: Literal["stable_hardware", "session_noise"] | None = None
+    locale_mode: Literal["fixed", "follow_exit"] | None = None
+    languages: list[str] | None = None
+    timezone_mode: Literal["fixed", "follow_exit"] | None = None
+    timezone: str | None = None
+    install_webrtc_guard: bool | None = None
+    window_size: tuple[int, int] | None = None
 
 
 class ProfileCreateRequest(BaseModel):
@@ -16,40 +32,25 @@ class ProfileCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Profile name")
     group: str | None = Field(None, description="Profile group ID")
     browser_settings: dict[str, Any] | None = Field(
-        None, description="Browser settings (os, screen, languages, etc.)"
+        None, description="Legacy browser settings (os, screen, languages, etc.)"
     )
-    proxy_config: dict[str, Any] | None = Field(None, description="Proxy configuration")
+    proxy_config: dict[str, Any] | None = Field(None, description="Optional manual proxy config")
+    node_id: str | None = Field(
+        None, description="Optional network node ID to bind atomically upon creation"
+    )
+    isolation: IsolationInput | None = Field(
+        None, description="Fixed-optimization isolation preferences"
+    )
     notes: str | None = Field(None, max_length=1000, description="Notes")
     tags: ProfileTags = Field(default_factory=list)
-    generate_fingerprint: bool = Field(True, description="Generate a fingerprint")
+    generate_fingerprint: bool = Field(True, description="Generate and pin a hardware fingerprint")
     fingerprint_preset: str | None = Field(
         None,
-        description=(
-            "Pin the profile to a captured real device, using an id from "
-            "GET /api/v1/fingerprints/presets. Omit to generate a fingerprint instead."
-        ),
+        description="Pin the profile to a specific real device preset ID.",
     )
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "name": "Facebook Profile 1",
-                "group": "social_media_group_id",
-                "browser_settings": {
-                    "os": "windows",
-                    "screen": "1920x1080",
-                    "languages": ["en-US", "en"],
-                },
-                "proxy_config": {
-                    "type": "http",
-                    "server": "proxy.example.com:8080",
-                    "username": "user",
-                    "password": "pass",
-                },
-                "notes": "Profile for Facebook",
-                "generate_fingerprint": True,
-            }
-        }
+    ip_drift_guard: bool = Field(
+        True,
+        description="Block launch when the bound node's exit IP or country changes.",
     )
 
 
@@ -60,79 +61,33 @@ class ProfileUpdateRequest(BaseModel):
     group: str | None = Field(None)
     status: ProfileStatus | None = Field(None)
     browser_settings: dict[str, Any] | None = Field(None)
+    isolation: IsolationInput | None = Field(None)
     proxy_config: dict[str, Any] | None = Field(None)
+    ip_drift_guard: bool | None = Field(None, description="Enable or disable exit IP drift guard.")
     notes: str | None = Field(None, max_length=1000)
     tags: ProfileTags | None = None
     row_version: int | None = Field(
         None,
-        description=(
-            "The row_version this edit was based on, as returned when the profile "
-            "was read. Sent back here, a save that another client landed in the "
-            "meantime is refused with 409 instead of overwriting it. Omitted, the "
-            "server guards only against two requests overlapping, which cannot "
-            "catch an edit made against a form loaded minutes ago."
-        ),
+        description="Optimistic concurrency counter returned when the profile was last read.",
     )
 
-    # The legacy flattened form of browser_settings. Kept for 0.1.x clients;
-    # removed in 1.0. Send the same keys inside browser_settings instead.
-    browser_os: str | None = Field(
-        None, description="Operating system (windows, macos, linux)", deprecated=True
-    )
-    browser_screen: str | None = Field(
-        None, description="Screen resolution (1920x1080)", deprecated=True
-    )
-    browser_user_agent: str | None = Field(None, description="User-Agent string", deprecated=True)
-    browser_languages: list[str] | None = Field(
-        None, description="Browser languages", deprecated=True
-    )
-    browser_timezone: str | None = Field(None, description="Timezone", deprecated=True)
-    browser_locale: str | None = Field(None, description="Locale (en_US, ru_RU)", deprecated=True)
-    browser_webrtc_mode: str | None = Field(
-        None, description="WebRTC mode (forward, replace, real, none)", deprecated=True
-    )
-    browser_canvas_noise: bool | None = Field(None, description="Canvas noise", deprecated=True)
-    browser_stable_canvas: bool | None = Field(
-        None,
-        description=(
-            "Keep the canvas reproducible across launches. Costs cross-site "
-            "unlinkability: the canvas becomes identical on every site."
-        ),
-        deprecated=True,
-    )
-    browser_webgl_noise: bool | None = Field(None, description="WebGL noise", deprecated=True)
-    browser_audio_noise: bool | None = Field(None, description="Audio noise", deprecated=True)
-    browser_hardware_concurrency: int | None = Field(
-        None, ge=1, le=32, description="CPU cores", deprecated=True
-    )
-    browser_device_memory: int | None = Field(
-        None, ge=1, le=128, description="Device memory (GB)", deprecated=True
-    )
-    browser_max_touch_points: int | None = Field(
-        None, ge=0, le=10, description="Max touch points", deprecated=True
-    )
-    browser_window_width: int | None = Field(
-        None, ge=800, le=3840, description="Browser window width", deprecated=True
-    )
-    browser_window_height: int | None = Field(
-        None, ge=600, le=2160, description="Browser window height", deprecated=True
-    )
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "status": "inactive",
-                "notes": "Updated notes",
-                "browser_settings": {
-                    "os": "windows",
-                    "screen": "1920x1080",
-                    "webrtc_mode": "replace",
-                    "canvas_noise": True,
-                    "webgl_noise": True,
-                },
-            }
-        }
-    )
+    # Deprecated flattened browser fields kept for backward API compatibility.
+    browser_os: str | None = Field(None, deprecated=True)
+    browser_screen: str | None = Field(None, deprecated=True)
+    browser_user_agent: str | None = Field(None, deprecated=True)
+    browser_languages: list[str] | None = Field(None, deprecated=True)
+    browser_timezone: str | None = Field(None, deprecated=True)
+    browser_locale: str | None = Field(None, deprecated=True)
+    browser_webrtc_mode: str | None = Field(None, deprecated=True)
+    browser_canvas_noise: bool | None = Field(None, deprecated=True)
+    browser_stable_canvas: bool | None = Field(None, deprecated=True)
+    browser_webgl_noise: bool | None = Field(None, deprecated=True)
+    browser_audio_noise: bool | None = Field(None, deprecated=True)
+    browser_hardware_concurrency: int | None = Field(None, ge=1, le=32, deprecated=True)
+    browser_device_memory: int | None = Field(None, ge=1, le=128, deprecated=True)
+    browser_max_touch_points: int | None = Field(None, ge=0, le=10, deprecated=True)
+    browser_window_width: int | None = Field(None, ge=800, le=3840, deprecated=True)
+    browser_window_height: int | None = Field(None, ge=600, le=2160, deprecated=True)
 
 
 class ProfileResponse(BaseModel):
@@ -140,7 +95,6 @@ class ProfileResponse(BaseModel):
 
     id: str
     name: str
-    permissions: dict[str, bool] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     group: str | None
     status: ProfileStatus
@@ -151,54 +105,49 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_used: datetime | None
-    deleted_at: datetime | None = None
-    # A short description of the pinned machine, not the stored config itself:
-    # that is ~40 properties and tens of kilobytes, which nothing here needs.
-    fingerprint: dict[str, Any] | None = Field(
-        None,
-        description=(
-            "Summary of the pinned machine, null until the first launch. Its values "
-            "come from Camoufox and may gain keys as Camoufox changes; not frozen "
-            "by the API contract."
-        ),
-    )
-    proxy_check: ProxyCheckRecord | None = Field(
-        None,
-        description=(
-            "The last answer this profile's proxy gave, or null if it has not been "
-            "checked since the proxy was last changed. Only a check writes it."
-        ),
-    )
-    row_version: int = Field(
-        0,
-        description=(
-            "Bumped by every save. Send it back in a later update to have a "
-            "concurrent save refused rather than silently overwritten."
-        ),
-    )
+    fingerprint: dict[str, Any] | None = None
+    isolation: dict[str, Any] | None = None
+    isolation_summary: dict[str, Any] | None = None
+    fingerprint_hash: str | None = None
+    ip_drift_guard: bool = True
+    last_exit_ip: str | None = None
+    last_exit_country: str | None = None
+    last_exit_at: datetime | None = None
+    cloud_revision: int = 0
+    cloud_synced_at: datetime | None = None
+    proxy_check: ProxyCheckRecord | None = None
+    row_version: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod
-    def from_profile(cls, profile: "Profile") -> "ProfileResponse":
+    def from_profile(
+        cls, profile: "Profile", *, active_policy_version: str | None = None
+    ) -> "ProfileResponse":
         """Build the API view of a profile."""
-        from camoufox_pm.api.access import is_admin, profile_permissions
-        from camoufox_pm.core import fingerprint_store
+        from camoufox_pm.core.isolation import (
+            parse_isolation,
+            summarize_fingerprint,
+            summarize_isolation,
+        )
 
         proxy_config = profile.proxy.model_dump() if profile.proxy else None
-        if not is_admin() and proxy_config:
-            proxy_config = {
-                key: value
-                for key, value in proxy_config.items()
-                if key not in {"username", "password", "ip_change_url"}
-            }
-            # Legacy proxy servers can contain URL userinfo as well.
-            if "@" in proxy_config.get("server", ""):
-                proxy_config["server"] = proxy_config["server"].rsplit("@", 1)[1]
+        iso_model = parse_isolation(profile.isolation_config)
+        iso_public: dict[str, Any] | None = None
+        if iso_model is not None:
+            iso_public = iso_model.model_dump(mode="json")
+            pin = iso_public.get("pinned_fingerprint")
+            if isinstance(pin, dict):
+                iso_public["pinned_fingerprint"] = {
+                    k: v for k, v in pin.items() if k not in {"fonts", "voices"}
+                }
+        iso_summary = summarize_isolation(iso_model, active_policy_version)
+        fp_hash = (
+            profile.fingerprint_hash or (iso_model.fingerprint_hash if iso_model else None) or None
+        )
         return cls(
             id=profile.id,
             name=profile.name,
-            permissions=profile_permissions(profile.id),
             group=profile.group,
             tags=profile.tags,
             status=profile.status,
@@ -206,26 +155,25 @@ class ProfileResponse(BaseModel):
                 profile.browser_settings.model_dump() if profile.browser_settings else {}
             ),
             proxy_config=proxy_config,
-            storage_path=profile.storage_path if is_admin() else None,
+            storage_path=profile.storage_path,
             notes=profile.notes,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
             last_used=profile.last_used,
-            deleted_at=profile.deleted_at,
-            fingerprint=fingerprint_store.summarize(
+            fingerprint=summarize_fingerprint(
                 profile.fingerprint,
                 profile.browser_settings.os if profile.browser_settings else None,
             ),
-            proxy_check=(
-                profile.proxy_check
-                if is_admin() or profile.proxy_check is None
-                else profile.proxy_check.model_copy(
-                    update={
-                        "error": "The proxy check failed." if profile.proxy_check.error else None,
-                        "findings": [],
-                    }
-                )
-            ),
+            isolation=iso_public,
+            isolation_summary=iso_summary,
+            fingerprint_hash=fp_hash,
+            ip_drift_guard=profile.ip_drift_guard,
+            last_exit_ip=profile.last_exit_ip,
+            last_exit_country=profile.last_exit_country,
+            last_exit_at=profile.last_exit_at,
+            cloud_revision=profile.cloud_revision,
+            cloud_synced_at=profile.cloud_synced_at,
+            proxy_check=profile.proxy_check,
             row_version=profile.row_version,
         )
 
@@ -249,41 +197,38 @@ class ProfileStatsResponse(BaseModel):
     total_duration_minutes: int
     last_session: datetime | None
     success_rate: float
-    actions: list[dict[str, Any]] = Field(
-        ..., description="Recent usage log entries; shape not covered by the API contract"
-    )
+    actions: list[dict[str, Any]]
 
 
 class ProfileCloneRequest(BaseModel):
     """Request body for cloning a profile."""
 
     new_name: str = Field(..., min_length=1, max_length=255)
-    regenerate_fingerprint: bool = Field(True, description="Generate a new fingerprint")
+    regenerate_fingerprint: bool = Field(
+        True, description="Allocate a new deduplicated fingerprint"
+    )
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"new_name": "Facebook Profile 1 (copy)", "regenerate_fingerprint": True}
-        }
+
+class SessionPrepareRequest(BaseModel):
+    """Request body for preparing an Electron embedded browser session."""
+
+    allow_ip_drift: bool = Field(
+        default=False,
+        description="Proceed even if the bound node's exit IP or country changed since last launch.",
     )
 
 
 class ProfileLaunchRequest(BaseModel):
     """Request body for launching a browser with a profile."""
 
-    headless: bool = Field(False, description="Launch in headless mode")
-    window_size: str | None = Field(None, description="Window size (1920x1080)")
-    additional_options: dict[str, Any] | None = Field(
-        None, description="Additional Camoufox options"
+    headless: bool = Field(default=False, description="Launch in headless mode")
+    window_size: str | None = Field(default=None, description="Window size (1920x1080)")
+    allow_ip_drift: bool = Field(
+        default=False,
+        description="Proceed with launch even if the bound node's exit IP or country changed.",
     )
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "headless": False,
-                "window_size": "1920x1080",
-                "additional_options": {"geoip": True, "humanize": True},
-            }
-        }
+    additional_options: dict[str, Any] | None = Field(
+        default=None, description="Additional browser launch options"
     )
 
 
@@ -291,27 +236,17 @@ class ProfileLaunchResponse(BaseModel):
     """Response returned when a browser is launched."""
 
     profile_id: str
-    browser_session_id: str = Field(
-        ...,
-        description=(
-            "A random value that never identified anything; no endpoint accepts it. "
-            "Use profile_id to address the running browser."
-        ),
-        deprecated=True,
-    )
+    browser_session_id: str = Field(..., deprecated=True)
     status: str = Field(..., description="launched or already_running")
     message: str
-    process_id: int | None = Field(None, description="OS process id of the browser, if known")
-    camoufox_options: dict[str, Any] = Field(
-        ...,
-        description="Launch internals passed to Camoufox; shape not covered by the API contract",
-    )
+    process_id: int | None = None
+    camoufox_options: dict[str, Any]
 
 
 class BrowserCloseResponse(BaseModel):
     """Response returned when a browser is asked to close."""
 
-    status: str = Field(..., description="closed or not_running")
+    status: str
     profile_id: str
     message: str
 
@@ -341,58 +276,30 @@ class BrowsersCloseAllResponse(BaseModel):
 
 
 class ProxyCheckRequest(BaseModel):
-    """Request body for checking a proxy that is not saved yet."""
+    """Request body for checking an unsaved proxy."""
 
-    proxy_config: dict[str, Any] | None = Field(
-        None, description="Proxy to check. Omit to check the direct connection."
-    )
-    browser_settings: dict[str, Any] | None = Field(
-        None, description="Settings to compare against the exit address"
-    )
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "proxy_config": {"type": "http", "server": "proxy.example.com:8080"},
-                "browser_settings": {"timezone": "Europe/Berlin"},
-            }
-        }
-    )
+    proxy_config: dict[str, Any] | None = None
+    browser_settings: dict[str, Any] | None = None
 
 
 class ReconcileOsRequest(BaseModel):
     """Which of the two things a profile says about its OS should win."""
 
-    keep_machine: bool = Field(
-        ...,
-        description=(
-            "True: put the OS setting back to what the pinned machine reports, changing "
-            "no fingerprint. False: pin a new machine for the OS setting instead — new "
-            "screen, GPU, cores, fonts and noise seeds."
-        ),
-    )
-
-    model_config = ConfigDict(json_schema_extra={"example": {"keep_machine": True}})
+    keep_machine: bool
 
 
 class ClearGeographyRequest(BaseModel):
     """Profiles whose stored timezone and coordinates should follow the proxy again."""
 
-    # min_length on the items too: a client building ids from empty form state
-    # otherwise gets a cheerful 200 reporting "" as not_found.
-    profile_ids: list[Annotated[str, StringConstraints(min_length=1)]] = Field(
-        ..., min_length=1, description="Profile IDs to clear"
-    )
-
-    model_config = ConfigDict(json_schema_extra={"example": {"profile_ids": ["a1b2c3d4"]}})
+    profile_ids: list[Annotated[str, StringConstraints(min_length=1)]] = Field(..., min_length=1)
 
 
 class ClearGeographyResponse(BaseModel):
     """What the request did to each profile it named."""
 
-    cleared: list[str] = Field(..., description="Had a timezone or coordinates; both are now unset")
-    unchanged: list[str] = Field(..., description="Already followed the proxy")
-    not_found: list[str] = Field(..., description="No such profile")
+    cleared: list[str]
+    unchanged: list[str]
+    not_found: list[str]
 
 
 class ProxyLocationResponse(BaseModel):
@@ -400,34 +307,29 @@ class ProxyLocationResponse(BaseModel):
 
     ip: str
     country: str | None = None
+    city: str | None = None
     timezone: str | None = None
     latitude: float | None = None
     longitude: float | None = None
 
 
 class ProxyFindingResponse(BaseModel):
-    """One thing worth telling the user about this proxy and this profile."""
+    """One finding from a proxy check."""
 
-    level: Level = Field(..., description="error, warning or info")
-    field: str = Field(..., description="The setting the finding is about")
+    level: Level
+    field: str
     message: str
 
 
 class ProxyCheckResponse(BaseModel):
-    """The result of reaching the internet through a proxy and comparing it."""
+    """Result of reaching the internet through a proxy and comparing it."""
 
     reachable: bool
     error: str | None = None
     latency_ms: int | None = None
     location: ProxyLocationResponse | None = None
     findings: list[ProxyFindingResponse] = Field(default_factory=list)
-    checked_at: datetime | None = Field(
-        None,
-        description=(
-            "When this answer was recorded on the profile. Null for a check of a "
-            "proxy that is not saved yet, which is recorded nowhere."
-        ),
-    )
+    checked_at: datetime | None = None
 
     @classmethod
     def from_result(
@@ -464,3 +366,24 @@ class TagSkipped(BaseModel):
 class BulkTagsResponse(BaseModel):
     updated: list[ProfileResponse]
     skipped: list[TagSkipped]
+
+
+class IsolationAuditCheckResponse(BaseModel):
+    """One item in an Isolation Audit report."""
+
+    key: str
+    title: str
+    status: Literal["pass", "warn", "fail"]
+    summary: str
+    detail: str
+    action: str | None = None
+
+
+class IsolationAuditResponse(BaseModel):
+    """Scored Isolation Audit report for one browser profile."""
+
+    profile_id: str
+    score: int
+    status: Literal["healthy", "warning", "critical"]
+    checked_at: str
+    checks: list[IsolationAuditCheckResponse]

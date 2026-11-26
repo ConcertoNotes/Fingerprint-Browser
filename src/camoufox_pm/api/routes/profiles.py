@@ -1,6 +1,6 @@
-"""
-API routes for managing profiles.
-"""
+"""API routes for managing browser profiles and isolation controls."""
+
+from __future__ import annotations
 
 import re
 import shutil
@@ -8,24 +8,15 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
 
-from camoufox_pm.api.access import (
-    authorized_bytes_response,
-    authorized_file_response,
-    is_admin,
-    record_audit,
-    require_admin,
-    require_profile_access,
-    visible_profile_ids,
-)
-from camoufox_pm.api.dependencies import get_profile_manager
+from camoufox_pm.api.dependencies import get_profile_manager, require_desktop_token
 from camoufox_pm.api.errors import ApiError, validation_message
 from camoufox_pm.api.models.profiles import (
     ActiveBrowsersResponse,
@@ -35,6 +26,7 @@ from camoufox_pm.api.models.profiles import (
     BulkTagsResponse,
     ClearGeographyRequest,
     ClearGeographyResponse,
+    IsolationAuditResponse,
     ProfileCloneRequest,
     ProfileCreateRequest,
     ProfileLaunchRequest,
@@ -46,18 +38,23 @@ from camoufox_pm.api.models.profiles import (
     ProxyCheckRequest,
     ProxyCheckResponse,
     ReconcileOsRequest,
+    SessionPrepareRequest,
 )
-from camoufox_pm.api.models.system import ApiResponse, ExcelImportData
+from camoufox_pm.api.models.system import ApiResponse, DevicePreset, PresetListData
 from camoufox_pm.core import proxy_check
 from camoufox_pm.core.database import StaleWriteError
-from camoufox_pm.core.excel_manager import ExcelManager
+from camoufox_pm.core.isolated_terminal import TerminalLaunchError, open_isolated_terminal
 from camoufox_pm.core.leases import ProfileLocked
-from camoufox_pm.core.models import BrowserSettings, ProfileStatus, ProxyConfig
+from camoufox_pm.core.mihomo_manager import MihomoUnavailable
+from camoufox_pm.core.models import BrowserSettings, ProfileStatus, ProxyConfig, normalize_tags
 from camoufox_pm.core.network_adapter import NetworkLaunchError
+from camoufox_pm.core.network_binding import NetworkBindings, NodeUnavailable
+from camoufox_pm.core.network_catalog import NetworkNotFound, NetworkSecretsUnavailable
+from camoufox_pm.core.profile_manager import ExitIpDriftError
 
 router = APIRouter()
 
-# Maps the deprecated flattened update fields onto their browser_settings keys.
+# Maps deprecated flattened update fields onto their browser_settings keys.
 _FLATTENED_BROWSER_FIELDS = {
     "browser_os": "os",
     "browser_screen": "screen",
@@ -78,6 +75,10 @@ _FLATTENED_BROWSER_FIELDS = {
 }
 
 
+def _policy_version() -> str:
+    return get_profile_manager().active_policy()[0].policy_version
+
+
 @router.get(
     "/profiles",
     response_model=ProfileListResponse,
@@ -87,7 +88,7 @@ _FLATTENED_BROWSER_FIELDS = {
 )
 async def list_profiles(
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(10, ge=1, le=100, description="Profiles per page"),
+    per_page: int = Query(50, ge=1, le=200, description="Profiles per page"),
     status: ProfileStatus | None = Query(None, description="Filter by status"),
     group: str | None = Query(None, description="Filter by group"),
     search: str | None = Query(None, max_length=255, description="Search by name or ID"),
@@ -97,8 +98,6 @@ async def list_profiles(
     """List profiles with filtering."""
     try:
         profile_manager = get_profile_manager()
-
-        # Build the filters
         filters: dict[str, Any] = {}
         if status:
             filters["status"] = status
@@ -106,46 +105,32 @@ async def list_profiles(
             filters["group"] = group
         if search:
             filters["search"] = search
-
-        from camoufox_pm.core.models import normalize_tags
-
         filters["tags"] = normalize_tags([*(tags or []), *([tag] if tag is not None else [])])
-        allowed = await visible_profile_ids()
+
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
-        if allowed is None:
-            total = await profile_manager.storage.count_profiles(filters)
-            paginated_profiles = await profile_manager.list_profiles(
-                filters=filters, limit=per_page, offset=start_idx
-            )
-        else:
-            visible = [
-                p for p in await profile_manager.list_profiles(filters=filters) if p.id in allowed
-            ]
-            total = len(visible)
-            paginated_profiles = visible[start_idx:end_idx]
-
-        # Convert to API models
-        profile_responses = []
-        for profile in paginated_profiles:
-            profile_responses.append(ProfileResponse.from_profile(profile))
+        total = await profile_manager.storage.count_profiles(filters)
+        paginated_profiles = await profile_manager.list_profiles(
+            filters=filters, limit=per_page, offset=start_idx
+        )
+        policy_ver = _policy_version()
 
         return ProfileListResponse(
-            profiles=profile_responses,
+            profiles=[
+                ProfileResponse.from_profile(profile, active_policy_version=policy_ver)
+                for profile in paginated_profiles
+            ],
             total=total,
             page=page,
             per_page=per_page,
             has_next=end_idx < total,
             has_prev=page > 1,
         )
-
     except ValueError as e:
-        raise HTTPException(422, str(e) if is_admin() else "Invalid profile request") from e
+        raise HTTPException(422, str(e)) from e
     except Exception as e:
         logger.error(f"Failed to list profiles: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -154,15 +139,13 @@ async def list_profiles(
     status_code=status.HTTP_201_CREATED,
     operation_id="create_profile",
     summary="Create a profile.",
-    description="Create a new profile with an auto-generated fingerprint.",
+    description="Create a new isolated profile with an immediately pinned deduplicated hardware fingerprint and optional atomic node binding.",
 )
 async def create_profile(request: ProfileCreateRequest):
     """Create a new profile."""
-    await require_admin()
     try:
         profile_manager = get_profile_manager()
-
-        # Create the profile
+        iso_dict = request.isolation.model_dump(exclude_none=True) if request.isolation else None
         profile = await profile_manager.create_profile(
             name=request.name,
             group=request.group,
@@ -172,49 +155,153 @@ async def create_profile(request: ProfileCreateRequest):
             notes=request.notes,
             fingerprint_preset=request.fingerprint_preset,
             tags=request.tags,
+            node_id=request.node_id,
+            isolation=iso_dict,
+            ip_drift_guard=request.ip_drift_guard,
         )
-
-        logger.info(f"Created profile: {profile.name} (ID: {profile.id})")
-
-        return ProfileResponse.from_profile(profile)
-
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
+    except NetworkNotFound as e:
+        raise ApiError(404, str(e), "node_not_found") from e
+    except NodeUnavailable as e:
+        raise ApiError(422, str(e), "node_unavailable") from e
     except ValueError as e:
-        raise HTTPException(
-            status_code=400, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to create profile: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get(
+    "/profiles/isolation/preview",
+    response_model=ApiResponse[dict[str, Any]],
+    operation_id="preview_profile_isolation",
+    summary="Preview an auto-allocated deduplicated real device fingerprint.",
+)
+async def preview_profile_isolation(
+    os: Literal["macos", "windows", "linux"] | None = Query(None),
+    tier: Literal["strict", "standard"] | None = Query(None),
+    preset_id: str | None = Query(None),
+    exclude_preset_id: str | None = Query(None),
+    webrtc_policy: Literal["block", "spoof_exit"] | None = Query(None),
+    canvas_policy: Literal["stable_hardware", "session_noise"] | None = Query(None),
+    locale_mode: Literal["fixed", "follow_exit"] | None = Query(None),
+    timezone_mode: Literal["fixed", "follow_exit"] | None = Query(None),
+    timezone: str | None = Query(None),
+    install_webrtc_guard: bool | None = Query(None),
+):
+    """Preview an auto-allocated deduplicated device preset prior to profile creation."""
+    try:
+        preview = await get_profile_manager().preview_isolation(
+            os_choice=os,
+            tier=tier,
+            preset_id=preset_id,
+            exclude_preset_ids={exclude_preset_id} if exclude_preset_id else None,
+            webrtc_policy=webrtc_policy,
+            canvas_policy=canvas_policy,
+            locale_mode=locale_mode,
+            timezone_mode=timezone_mode,
+            timezone=timezone,
+            install_webrtc_guard=install_webrtc_guard,
+        )
+        return ApiResponse(success=True, message="Isolation preview ready", data=preview)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/profiles/fingerprint-presets",
+    response_model=ApiResponse[PresetListData],
+    operation_id="list_profile_fingerprint_presets",
+    summary="List quality-filtered real device presets annotated with local usage.",
+)
+async def list_profile_fingerprint_presets(
+    os: Literal["macos", "windows", "linux"] | None = Query(None),
+):
+    """Return filtered real device presets with ``in_use`` flags."""
+    presets = await get_profile_manager().list_fingerprint_presets(os)
+    return ApiResponse(
+        success=True,
+        message=f"{len(presets)} filtered presets available",
+        data=PresetListData(
+            presets=[DevicePreset(**preset) for preset in presets],
+            total=len(presets),
+        ),
+    )
 
 
 @router.post(
     "/profiles/tags",
     response_model=ApiResponse[BulkTagsResponse],
     operation_id="bulk_update_profile_tags",
+    summary="Bulk add or remove tags on profiles.",
 )
 async def bulk_tags(request: BulkTagsRequest):
-    for target in request.profiles:
-        await require_profile_access(target.id, "edit")
     result = await get_profile_manager().bulk_update_tags(
         [target.model_dump() for target in request.profiles], request.add, request.remove
     )
-    for profile in result["updated"]:
-        await record_audit("bulk_update_profile_tags", profile.id)
+    policy_ver = _policy_version()
     return ApiResponse(
         success=True,
         message="Tag edit completed",
-        data={
-            "updated": [ProfileResponse.from_profile(profile) for profile in result["updated"]],
-            "skipped": result["skipped"]
-            if is_admin()
-            else [
-                {"id": item["id"], "reason": "Profile could not be updated"}
-                for item in result["skipped"]
+        data=BulkTagsResponse(
+            updated=[
+                ProfileResponse.from_profile(profile, active_policy_version=policy_ver)
+                for profile in result["updated"]
             ],
-        },
+            skipped=result["skipped"],
+        ),
     )
+
+
+@router.post(
+    "/profiles/clear-geography",
+    response_model=ClearGeographyResponse,
+    operation_id="clear_profiles_geography",
+    summary="Clear stored timezone and coordinates.",
+)
+async def clear_profiles_geography(request: ClearGeographyRequest):
+    """Make the named profiles derive their location from their proxy again."""
+    try:
+        result = await get_profile_manager().clear_geography(request.profile_ids)
+        return ClearGeographyResponse(**result)
+    except StaleWriteError:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to clear geography: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/profiles/import",
+    response_model=ProfileResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="import_profile",
+    summary="Import a profile.",
+    description="Create a profile from an archive produced by the export endpoint.",
+)
+async def import_profile(
+    file: UploadFile = File(...),
+    name: str | None = None,
+    form_name: str | None = Form(default=None, alias="name"),
+):
+    """Restore a profile from an uploaded archive."""
+    name = name or form_name
+    profile_manager = get_profile_manager()
+    handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    source = Path(handle.name)
+    try:
+        shutil.copyfileobj(file.file, handle)
+        handle.close()
+        profile = await profile_manager.import_profile(source, name=name)
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Failed to import profile: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        handle.close()
+        source.unlink(missing_ok=True)
 
 
 @router.get(
@@ -226,27 +313,18 @@ async def bulk_tags(request: BulkTagsRequest):
 )
 async def get_profile(profile_id: str):
     """Get a profile by ID."""
-    await require_profile_access(profile_id, "view")
     try:
-        profile_manager = get_profile_manager()
-        profile = await profile_manager.get_profile(profile_id)
-
+        profile = await get_profile_manager().get_profile(profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        return ProfileResponse.from_profile(profile)
-
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
     except HTTPException:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except Exception as e:
         logger.error(f"Failed to get profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.put(
@@ -254,63 +332,35 @@ async def get_profile(profile_id: str):
     response_model=ProfileResponse,
     operation_id="update_profile",
     summary="Update a profile.",
-    description=(
-        "Update a profile's data. A field that is sent is authoritative, including "
-        "an explicit null, which clears it; a field that is omitted is left alone. "
-        "browser_settings is merged over the stored settings."
-    ),
 )
 async def update_profile(profile_id: str, request: ProfileUpdateRequest):
     """Update a profile."""
-    await require_profile_access(profile_id, "edit")
     try:
         profile_manager = get_profile_manager()
-
-        # A field the client sent is authoritative, including an explicit null,
-        # which clears it. A field it omitted is left untouched. Testing for
-        # "is not None" instead would make clearing a proxy, a group or the
-        # notes silently do nothing while still reporting success.
-        # Read through model_dump: attribute access on the deprecated flattened
-        # fields would raise DeprecationWarning from inside our own route.
         sent = request.model_dump(exclude_unset=True)
 
         updates: dict[str, Any] = {}
         if sent.get("name") is not None:
             updates["name"] = sent["name"]
         if "group" in sent:
-            if not is_admin():
-                current = await profile_manager.get_profile(profile_id)
-                if current is None:
-                    raise HTTPException(404, "Profile not found")
-                if sent["group"] != current.group:
-                    raise HTTPException(403, "Administrator access required for group assignment")
             updates["group"] = sent["group"]
         if sent.get("status") is not None:
             updates["status"] = sent["status"]
         if "proxy_config" in sent:
-            if not is_admin():
-                current = await profile_manager.get_profile(profile_id)
-                if current is None:
-                    raise HTTPException(404, "Profile not found")
-                public_proxy = ProfileResponse.from_profile(current).proxy_config
-                if sent["proxy_config"] != public_proxy:
-                    raise HTTPException(403, "Administrator access required for proxy changes")
-                # A redacted round-trip is a no-op; preserve the secret snapshot.
-            else:
-                updates["proxy_config"] = sent["proxy_config"]
+            updates["proxy_config"] = sent["proxy_config"]
         if "notes" in sent:
             updates["notes"] = sent["notes"]
         if "tags" in sent:
             updates["tags"] = sent["tags"] or []
+        if sent.get("ip_drift_guard") is not None:
+            updates["ip_drift_guard"] = sent["ip_drift_guard"]
+        if sent.get("isolation") is not None:
+            updates["isolation"] = {
+                k: v for k, v in sent["isolation"].items() if v is not None or k == "timezone"
+            }
 
-        # Not a field of the profile: the version this edit was based on, used
-        # to refuse the save if someone else got there first.
         expected_row_version = sent.get("row_version")
 
-        # Browser settings arrive either as a nested object or as the deprecated
-        # flattened browser_* fields. Both are collected here and merged over the
-        # stored settings, so a client that sends only the fields it edits cannot
-        # wipe the rest of the generated fingerprint.
         browser_updates: dict[str, Any] = {}
         if sent.get("browser_settings") is not None:
             browser_updates.update(sent["browser_settings"])
@@ -327,35 +377,23 @@ async def update_profile(profile_id: str, request: ProfileUpdateRequest):
             else:
                 updates["browser_settings"] = browser_updates
 
-        # Apply the update
         updated_profile = await profile_manager.update_profile(
             profile_id, updates, expected_row_version=expected_row_version
         )
-
         if not updated_profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        logger.info(f"Updated profile: {updated_profile.name} (ID: {profile_id})")
-
-        return ProfileResponse.from_profile(updated_profile)
-
+        return ProfileResponse.from_profile(
+            updated_profile, active_policy_version=_policy_version()
+        )
     except HTTPException:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except ValidationError as e:
-        # browser_settings is a free-form dict on the way in, so bad values only
-        # fail when it is turned into a BrowserSettings. That is the client's
-        # mistake, not a server fault.
-        logger.warning(f"Rejected invalid update for profile {profile_id}: {e}")
         raise ApiError(422, validation_message(e.errors()), details=e.errors()) from e
     except Exception as e:
         logger.error(f"Failed to update profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete(
@@ -363,35 +401,120 @@ async def update_profile(profile_id: str, request: ProfileUpdateRequest):
     response_model=ApiResponse[None],
     operation_id="delete_profile",
     summary="Delete a profile.",
-    description="Move a closed profile and its data to recoverable trash.",
+    description="Permanently delete a closed profile and its browser data.",
 )
 async def delete_profile(profile_id: str):
-    """Delete a profile."""
-    await require_profile_access(profile_id, "edit")
+    """Permanently delete a profile (no Trash)."""
     try:
-        profile_manager = get_profile_manager()
-        success = await profile_manager.delete_profile(profile_id)
-
+        success = await get_profile_manager().delete_profile(profile_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        logger.info(f"Deleted profile: ID {profile_id}")
-
-        return ApiResponse(success=True, message=f"Profile {profile_id} moved to trash", data=None)
-
+        return ApiResponse(success=True, message=f"Profile {profile_id} deleted", data=None)
     except HTTPException:
         raise
     except ProfileLocked:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except Exception as e:
         logger.error(f"Failed to delete profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post(
+    "/profiles/{profile_id}/audit",
+    response_model=ApiResponse[IsolationAuditResponse],
+    operation_id="audit_profile_isolation",
+    summary="Run an isolation health audit on a profile.",
+)
+async def audit_profile(profile_id: str):
+    """Run all isolation, anti-leak, and uniqueness checks on a profile."""
+    try:
+        report = await get_profile_manager().audit_profile(profile_id)
+        return ApiResponse(
+            success=True,
+            message="Isolation audit complete",
+            data=IsolationAuditResponse(**report),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Failed to audit profile {profile_id}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/profiles/{profile_id}/reoptimize",
+    response_model=ProfileResponse,
+    operation_id="reoptimize_profile_isolation",
+    summary="Apply the latest isolation policy to a profile without changing its hardware.",
+)
+async def reoptimize_profile(profile_id: str):
+    """Upgrade a profile's isolation policy & anti-leak prefs in place."""
+    try:
+        profile = await get_profile_manager().reoptimize_profile(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
+    except HTTPException:
+        raise
+    except StaleWriteError:
+        raise
+    except ProfileLocked:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to reoptimize profile {profile_id}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/profiles/{profile_id}/session/prepare",
+    response_model=ApiResponse[dict[str, Any]],
+    dependencies=[Depends(require_desktop_token)],
+    operation_id="prepare_profile_session",
+    summary="Prepare an isolated embedded browser session, dedicated proxy listener, and CDP fingerprint payload.",
+)
+async def prepare_profile_session(
+    profile_id: str,
+    request: SessionPrepareRequest | None = Body(default=None),
+):
+    """Prepare the profile's proxy tunnel and return its CDP isolation descriptor to Electron."""
+    options = request or SessionPrepareRequest()
+    try:
+        payload = await get_profile_manager().prepare_session(
+            profile_id,
+            allow_ip_drift=options.allow_ip_drift,
+            include_proxy_secrets=True,
+        )
+        return ApiResponse(success=True, message="Profile session ready", data=payload)
+    except ExitIpDriftError as e:
+        raise ApiError(409, str(e), "exit_ip_drift", details=[e.to_detail()]) from e
+    except NetworkLaunchError as e:
+        raise ApiError(e.status, str(e), e.code) from e
+    except ProfileLocked as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Failed to prepare session for profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post(
+    "/profiles/{profile_id}/session/release",
+    response_model=ApiResponse[dict[str, Any]],
+    dependencies=[Depends(require_desktop_token)],
+    operation_id="release_profile_session",
+    summary="Release an active embedded browser session, its dedicated proxy runtime, and its lease.",
+)
+async def release_profile_session(profile_id: str):
+    """Stop the profile's proxy runtime and release its SQLite lease."""
+    try:
+        result = await get_profile_manager().release_session(profile_id)
+        return ApiResponse(success=True, message=result["message"], data=result)
+    except Exception as e:
+        logger.error(f"Failed to release session for profile {profile_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -399,60 +522,94 @@ async def delete_profile(profile_id: str):
     response_model=ProfileLaunchResponse,
     operation_id="launch_profile",
     summary="Launch a browser.",
-    description="Launch Camoufox with the profile's settings.",
+    description="Launch an isolated browser window with the profile's pinned configuration.",
 )
-async def launch_profile(profile_id: str, request: ProfileLaunchRequest):
+async def launch_profile(
+    profile_id: str,
+    request: ProfileLaunchRequest | None = Body(default=None),
+):
     """Launch a browser with a profile."""
-    await require_profile_access(profile_id, "launch")
+    options = request or ProfileLaunchRequest()
     try:
-        profile_manager = get_profile_manager()
-
-        # Launch the browser
-        browser_session = await profile_manager.launch_browser(
+        browser_session = await get_profile_manager().launch_browser(
             profile_id,
-            headless=request.headless,
-            window_size=request.window_size,
-            **(request.additional_options or {}) if is_admin() else {},
+            headless=options.headless,
+            window_size=options.window_size,
+            allow_ip_drift=options.allow_ip_drift,
+            **(options.additional_options or {}),
         )
-
-        logger.info(f"Launched browser for profile: {profile_id}")
-
         return ProfileLaunchResponse(
             profile_id=profile_id,
             browser_session_id=str(uuid.uuid4()),
-            status=browser_session.get("status", "launched") if is_admin() else "launched",
-            message=browser_session.get("message", "Browser launched successfully")
-            if is_admin()
-            else "Browser launched successfully",
+            status=browser_session.get("status", "launched"),
+            message=browser_session.get("message", "Browser launched successfully"),
             process_id=browser_session.get("process_id"),
             camoufox_options={
                 "process_id": browser_session.get("process_id"),
-                "status": browser_session.get("status") if is_admin() else "launched",
-                "options": browser_session.get("camoufox_options", {}) if is_admin() else {},
+                "status": browser_session.get("status"),
+                "options": browser_session.get("camoufox_options", {}),
             },
         )
-
+    except ExitIpDriftError as e:
+        raise ApiError(409, str(e), "exit_ip_drift", details=[e.to_detail()]) from e
     except NetworkLaunchError as e:
-        # A bound node that cannot be used stops the launch with its own reason;
-        # nothing falls back to the manual proxy or a direct connection.
         raise ApiError(e.status, str(e), e.code) from e
     except ProfileLocked as e:
-        # Another instance holds the lease. A conflict, not a fault: the client
-        # can retry once the holder closes the browser, and a 500 would read as
-        # "we broke" for an outcome the design intends.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e) if is_admin() else "Profile operation failed",
-        ) from e
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(
-            status_code=404, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to launch browser for profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post(
+    "/profiles/{profile_id}/terminal",
+    response_model=ApiResponse[dict[str, Any]],
+    operation_id="open_profile_terminal",
+    summary="Open an isolated native terminal routed through a running profile's proxy tunnel.",
+)
+async def open_profile_terminal(profile_id: str):
+    """Spawn a same-tunnel isolated OS terminal for a running bound profile."""
+    try:
+        result = await open_isolated_terminal(get_profile_manager(), profile_id)
+        return ApiResponse(success=True, message="Isolated terminal launched", data=result)
+    except TerminalLaunchError as exc:
+        raise ApiError(exc.status, str(exc), exc.code) from None
+
+
+@router.post(
+    "/profiles/{profile_id}/probe-risk-domains",
+    response_model=ApiResponse[dict[str, Any]],
+    operation_id="probe_profile_risk_domains",
+    summary="Probe representative risk and verification domains through a profile's bound proxy tunnel.",
+)
+async def probe_profile_risk_domains(profile_id: str):
+    """Run live reachability checks for risk & KYC domains via the profile's bound node."""
+    manager = get_profile_manager()
+    profile = await manager.get_profile(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
+    binding = NetworkBindings(manager).get(profile_id)
+    if binding is None:
+        raise ApiError(
+            409,
+            "Bind a proxy node to this profile before probing risk domains.",
+            "no_bound_node",
+        )
+    try:
+        report = await manager.network_probe.probe_risk_domains(
+            binding["node_id"], profile_id=profile_id
+        )
+    except NetworkNotFound as exc:
+        raise ApiError(404, str(exc)) from None
+    except NetworkSecretsUnavailable as exc:
+        raise ApiError(409, str(exc), "secrets_unavailable") from None
+    except MihomoUnavailable as exc:
+        raise ApiError(503, str(exc), exc.code) from None
+    except NetworkLaunchError as exc:
+        raise ApiError(exc.status, str(exc), exc.code) from None
+    return ApiResponse(success=True, message="Risk domain probe completed", data=report)
 
 
 @router.post(
@@ -461,44 +618,26 @@ async def launch_profile(profile_id: str, request: ProfileLaunchRequest):
     status_code=status.HTTP_201_CREATED,
     operation_id="clone_profile",
     summary="Clone a profile.",
-    description="Create a copy of a profile with a new fingerprint.",
+    description="Create a copy of a profile with a new deduplicated fingerprint.",
 )
 async def clone_profile(profile_id: str, request: ProfileCloneRequest):
     """Clone a profile."""
-    await require_profile_access(profile_id, "export")
-    await require_admin()
     try:
-        profile_manager = get_profile_manager()
-
-        # Clone the profile
-        cloned_profile = await profile_manager.clone_profile(
+        cloned_profile = await get_profile_manager().clone_profile(
             profile_id, request.new_name, regenerate_fingerprint=request.regenerate_fingerprint
         )
         if not cloned_profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        logger.info(f"Cloned profile: {profile_id} -> {cloned_profile.id}")
-
-        return ProfileResponse.from_profile(cloned_profile)
-
+        return ProfileResponse.from_profile(cloned_profile, active_policy_version=_policy_version())
     except HTTPException:
-        # Without this the 404 raised above is caught by the handler below and
-        # served as a 500: the client's own bad id reported as a server fault,
-        # and a page for whoever watches the error rate.
         raise
     except ProfileLocked:
         raise
     except ValueError as e:
-        # A missing source returns None above; a ValueError here is bad input
-        # (pydantic's ValidationError subclasses it), not a missing profile.
-        raise HTTPException(
-            status_code=400, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to clone profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -506,40 +645,20 @@ async def clone_profile(profile_id: str, request: ProfileCloneRequest):
     response_model=ProxyCheckResponse,
     operation_id="check_profile_proxy",
     summary="Check a profile's proxy.",
-    description=(
-        "Reach the internet through the profile's proxy, report where it comes out, "
-        "and list everything a page could notice between that and the profile's settings."
-    ),
 )
 async def check_profile_proxy(profile_id: str):
     """Check a saved profile's proxy against its settings."""
-    await require_profile_access(profile_id, "edit")
     profile = await get_profile_manager().get_profile(profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
     result = await proxy_check.check(profile.proxy, profile.browser_settings)
-
-    # Kept on the profile so the list can show this answer later. A check the
-    # user asked for is the only thing that writes it — nothing here polls.
-    #
-    # Read back rather than writing the profile fetched above: the check just
-    # spent seconds on the network, and anything edited in the meantime would be
-    # reverted by writing a stale copy. If the proxy itself moved, the answer is
-    # about a proxy this profile no longer has, so it is dropped rather than
-    # shown — the same rule that clears the record on an edit.
     stored = proxy_check.record(result)
     manager = get_profile_manager()
     current = await manager.get_profile(profile_id)
     if current and current.proxy == profile.proxy:
         await manager.storage.set_proxy_check(profile_id, stored)
-        response = ProxyCheckResponse.from_result(result, checked_at=stored.checked_at)
-    else:
-        response = ProxyCheckResponse.from_result(result)
-    if not is_admin():
-        response.error = "The proxy check failed." if response.error else None
-        response.findings = []
-    return response
+        return ProxyCheckResponse.from_result(result, checked_at=stored.checked_at)
+    return ProxyCheckResponse.from_result(result)
 
 
 @router.post(
@@ -547,20 +666,14 @@ async def check_profile_proxy(profile_id: str):
     response_model=ProxyCheckResponse,
     operation_id="check_proxy",
     summary="Check an unsaved proxy.",
-    description=(
-        "The same check for a proxy that has not been saved yet, so a profile can be "
-        "checked while it is still being filled in."
-    ),
 )
 async def check_proxy(request: ProxyCheckRequest):
     """Check an unsaved proxy against unsaved settings."""
-    await require_admin()
     try:
         proxy = ProxyConfig(**request.proxy_config) if request.proxy_config else None
         settings = BrowserSettings(**(request.browser_settings or {}))
     except ValidationError as e:
         raise ApiError(422, validation_message(e.errors()), details=e.errors()) from e
-
     result = await proxy_check.check(proxy, settings)
     return ProxyCheckResponse.from_result(result)
 
@@ -570,42 +683,28 @@ async def check_proxy(request: ProxyCheckRequest):
     response_model=ProfileStatsResponse,
     operation_id="get_profile_stats",
     summary="Get profile statistics.",
-    description="Get usage statistics for a profile.",
 )
 async def get_profile_stats(profile_id: str):
     """Get usage statistics for a profile."""
-    await require_profile_access(profile_id, "view")
     try:
         profile_manager = get_profile_manager()
-
-        # Verify the profile exists
         profile = await profile_manager.get_profile(profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        # Fetch the statistics
         stats = await profile_manager.get_profile_stats(profile_id)
-
         return ProfileStatsResponse(
             profile_id=profile_id,
             total_sessions=stats.get("total_sessions", 0),
             total_duration_minutes=stats.get("total_duration_minutes", 0),
-            last_session=stats.get("last_session") if is_admin() else None,
+            last_session=stats.get("last_session"),
             success_rate=stats.get("success_rate", 0.0),
-            actions=stats.get("actions", []) if is_admin() else [],
+            actions=stats.get("actions", []),
         )
-
     except HTTPException:
-        raise
-    except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except Exception as e:
         logger.error(f"Failed to get statistics for profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -613,126 +712,63 @@ async def get_profile_stats(profile_id: str):
     response_model=ProfileResponse,
     operation_id="refresh_browser_version",
     summary="Refresh the pinned browser version.",
-    description=(
-        "Move the profile's pinned machine onto the installed browser version, "
-        "keeping its hardware. A pin never ages on its own, and a browser several "
-        "releases behind is itself unusual."
-    ),
 )
 async def refresh_browser_version(profile_id: str):
     """Update only the browser-version part of a profile's pinned fingerprint."""
-    await require_profile_access(profile_id, "edit")
     try:
-        profile_manager = get_profile_manager()
-        profile = await profile_manager.refresh_browser_version(profile_id)
+        profile = await get_profile_manager().refresh_browser_version(profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-        return ProfileResponse.from_profile(profile)
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
     except HTTPException:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Failed to refresh the browser version for {profile_id}: {exc}")
-        raise HTTPException(
-            status_code=500, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        logger.error(f"Failed to refresh browser version for {profile_id}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post(
     "/profiles/{profile_id}/reconcile-os",
     response_model=ProfileResponse,
-    summary="Reconcile the OS setting with the pinned machine",
-    description=(
-        "A profile's OS setting and its pinned machine can disagree, because the pin is "
-        "what a page sees and the setting is only a dropdown. Either put the setting back "
-        "to what the machine reports (no fingerprint change), or pin a new machine for the "
-        "setting — new screen, GPU, cores, fonts and noise seeds."
-    ),
+    operation_id="reconcile_profile_os",
+    summary="Reconcile the OS setting with the pinned machine.",
 )
 async def reconcile_profile_os(profile_id: str, request: ReconcileOsRequest):
     """Bring a profile's OS setting and its pinned machine back into agreement."""
-    await require_profile_access(profile_id, "edit")
     try:
         profile = await get_profile_manager().reconcile_os(profile_id, request.keep_machine)
         if not profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-        return ProfileResponse.from_profile(profile)
+        return ProfileResponse.from_profile(profile, active_policy_version=_policy_version())
     except HTTPException:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Failed to reconcile the OS for {profile_id}: {exc}")
-        raise HTTPException(
-            status_code=500, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
-
-
-@router.post(
-    "/profiles/clear-geography",
-    response_model=ClearGeographyResponse,
-    summary="Clear stored timezone and coordinates",
-    description=(
-        "Unset the timezone and coordinates of the named profiles so both follow the "
-        "proxy's exit address again, as a profile created today does. Takes a list "
-        "because profiles created before that behaviour all carry a randomly chosen "
-        "region. Languages and locale are left alone."
-    ),
-)
-async def clear_profiles_geography(request: ClearGeographyRequest):
-    """Make the named profiles derive their location from their proxy again."""
-    for profile_id in request.profile_ids:
-        await require_profile_access(profile_id, "edit")
-    try:
-        result = await get_profile_manager().clear_geography(request.profile_ids)
-        for profile_id in result["cleared"]:
-            await record_audit("clear_profiles_geography", profile_id)
-        return ClearGeographyResponse(**result)
-    except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
-        raise
-    except Exception as exc:
-        logger.error(f"Failed to clear geography: {exc}")
-        raise HTTPException(
-            status_code=500, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        logger.error(f"Failed to reconcile OS for {profile_id}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get(
     "/profiles/{profile_id}/export",
     operation_id="export_profile",
     summary="Export a profile.",
-    description=(
-        "Download the profile and its browser data (cookies, storage, history) as a "
-        "single archive. Contains the proxy password and live session cookies."
-    ),
     response_class=FileResponse,
     responses={200: {"content": {"application/zip": {}}, "description": "The profile archive"}},
 )
 async def export_profile(profile_id: str):
     """Stream a profile archive."""
-    await require_profile_access(profile_id, "export")
     profile_manager = get_profile_manager()
     profile = await profile_manager.get_profile(profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
 
-    # Written to a temp file rather than memory: a warmed-up profile carries
-    # tens of megabytes of storage and history.
     handle = tempfile.NamedTemporaryFile(suffix=".camoufox.zip", delete=False)
     handle.close()
     destination = Path(handle.name)
@@ -741,75 +777,20 @@ async def export_profile(profile_id: str):
         await profile_manager.export_profile(profile_id, destination)
     except (ValueError, ProfileLocked) as exc:
         destination.unlink(missing_ok=True)
-        # A running browser is a state conflict, not a bad request — whether it
-        # is running here or leased by another instance.
-        raise HTTPException(
-            status_code=409, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         destination.unlink(missing_ok=True)
         logger.error(f"Failed to export profile {profile_id}: {exc}")
-        raise HTTPException(
-            status_code=500, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", profile.name).strip("-") or profile_id
-    try:
-        return await authorized_file_response(
-            destination,
-            [profile_id],
-            media_type="application/zip",
-            filename=f"{safe_name}.camoufox.zip",
-            background=BackgroundTask(destination.unlink, missing_ok=True),
-        )
-    except BaseException:
-        destination.unlink(missing_ok=True)
-        raise
-
-
-@router.post(
-    "/profiles/import",
-    response_model=ProfileResponse,
-    status_code=status.HTTP_201_CREATED,
-    operation_id="import_profile",
-    summary="Import a profile.",
-    description="Create a profile from an archive produced by the export endpoint.",
-)
-async def import_profile(
-    file: UploadFile = File(...),
-    name: str | None = None,
-    form_name: str | None = Form(default=None, alias="name"),
-):
-    """Restore a profile from an uploaded archive.
-
-    ``name`` is accepted both as a query parameter and as a form field. Every
-    other part of this request travels in the multipart body, so a client author
-    reaches for the form field first — and used to get no error and no rename,
-    because only the query parameter was read.
-    """
-    await require_admin()
-    name = name or form_name
-    profile_manager = get_profile_manager()
-
-    handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    source = Path(handle.name)
-    try:
-        shutil.copyfileobj(file.file, handle)
-        handle.close()
-        profile = await profile_manager.import_profile(source, name=name)
-        return ProfileResponse.from_profile(profile)
-    except (ValueError, zipfile.BadZipFile) as exc:
-        raise HTTPException(
-            status_code=400, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
-    except Exception as exc:
-        logger.error(f"Failed to import profile: {exc}")
-        raise HTTPException(
-            status_code=500, detail=str(exc) if is_admin() else "Profile operation failed"
-        ) from exc
-    finally:
-        handle.close()
-        source.unlink(missing_ok=True)
+    return FileResponse(
+        destination,
+        media_type="application/zip",
+        filename=f"{safe_name}.camoufox.zip",
+        headers={"Cache-Control": "no-store"},
+        background=BackgroundTask(destination.unlink, missing_ok=True),
+    )
 
 
 @router.post(
@@ -817,139 +798,24 @@ async def import_profile(
     response_model=ProfileResponse,
     operation_id="reset_profile_fingerprint",
     summary="Reset the fingerprint.",
-    description="Fully regenerate the browser fingerprint for a profile.",
+    description="Allocate and immediately pin a fresh deduplicated real-device fingerprint.",
 )
 async def reset_profile_fingerprint(profile_id: str):
     """Reset and regenerate a profile's fingerprint."""
-    await require_profile_access(profile_id, "edit")
     try:
-        profile_manager = get_profile_manager()
-
-        # Verify the profile exists
-        profile = await profile_manager.get_profile(profile_id)
-        if not profile:
-            raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        # Regenerate the fingerprint
-        updated_profile = await profile_manager.rotate_profile_fingerprint(profile_id)
+        updated_profile = await get_profile_manager().rotate_profile_fingerprint(profile_id)
         if not updated_profile:
             raise HTTPException(status_code=404, detail=f"Profile with ID {profile_id} not found")
-
-        logger.info(f"Reset fingerprint for profile: {updated_profile.name} (ID: {profile_id})")
-
-        return ProfileResponse.from_profile(updated_profile)
-
+        return ProfileResponse.from_profile(
+            updated_profile, active_policy_version=_policy_version()
+        )
     except HTTPException:
         raise
     except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
         raise
     except Exception as e:
         logger.error(f"Failed to reset fingerprint for profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
-
-
-@router.get(
-    "/profiles/export/excel",
-    operation_id="export_profiles_to_excel",
-    summary="Export profiles to Excel.",
-    description="Export all profiles to an Excel file for bulk editing.",
-    response_class=Response,
-    responses={
-        200: {
-            "content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}},
-            "description": "The Excel workbook",
-        }
-    },
-)
-async def export_profiles_to_excel():
-    """Export all profiles to an Excel file."""
-    try:
-        profile_manager = get_profile_manager()
-        excel_manager = ExcelManager(profile_manager)
-
-        # Export the profiles
-        allowed = await visible_profile_ids("export")
-        profiles = await profile_manager.list_profiles()
-        profiles = [p for p in profiles if allowed is None or p.id in allowed]
-        excel_data = await excel_manager.export_profiles_to_excel(profiles)
-
-        logger.info("Profiles exported to Excel")
-
-        return await authorized_bytes_response(
-            excel_data,
-            [p.id for p in profiles],
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=camoufox_profiles.xlsx"},
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to export profiles to Excel: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
-
-
-@router.post(
-    "/profiles/import/excel",
-    response_model=ApiResponse[ExcelImportData],
-    operation_id="import_profiles_from_excel",
-    summary="Import profiles from Excel.",
-    description="Import profiles from an Excel file, creating new ones.",
-)
-async def import_profiles_from_excel(file: UploadFile = File(...)):
-    """Import profiles from an Excel file."""
-    await require_admin()
-    try:
-        # Validate the file type
-        if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-            raise HTTPException(
-                status_code=400, detail="Only Excel files (.xlsx, .xls) are supported"
-            )
-
-        # Read the file
-        excel_data = await file.read()
-
-        profile_manager = get_profile_manager()
-        excel_manager = ExcelManager(profile_manager)
-
-        # Import the profiles
-        result = await excel_manager.import_profiles_from_excel(excel_data)
-
-        if result["success"]:
-            logger.info(
-                f"Import complete: created {result['created_count']}, updated {result['updated_count']}"
-            )
-        else:
-            logger.warning(f"Import finished with {result['error_count']} errors")
-
-        return ApiResponse(
-            success=result["success"],
-            message=result["summary"],
-            data=ExcelImportData(
-                created_count=result["created_count"],
-                updated_count=result["updated_count"],
-                error_count=result["error_count"],
-                errors=result["errors"],
-            ),
-        )
-
-    except HTTPException:
-        raise
-    except StaleWriteError:
-        # Let it reach the app-level handler, which renders it as 409. The
-        # catch-all below would otherwise report a conflict as a server fault.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to import profiles from Excel: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -957,29 +823,14 @@ async def import_profiles_from_excel(file: UploadFile = File(...)):
     response_model=BrowserCloseResponse,
     operation_id="close_profile_browser",
     summary="Close a profile's browser.",
-    description="Force-close the browser for a profile. Closing one that is not running is a no-op.",
 )
 async def close_profile_browser(profile_id: str):
     """Close the browser for a profile."""
-    await require_profile_access(profile_id, "launch")
     try:
-        profile_manager = get_profile_manager()
-        result = await profile_manager.close_browser(profile_id)
-        if not is_admin():
-            result = {
-                "status": "closed",
-                "profile_id": profile_id,
-                "message": "Browser closed successfully",
-            }
-
-        logger.info(f"Browser closed for profile: {profile_id}")
-        return result
-
+        return await get_profile_manager().close_browser(profile_id)
     except Exception as e:
         logger.error(f"Failed to close browser for profile {profile_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get(
@@ -987,32 +838,15 @@ async def close_profile_browser(profile_id: str):
     response_model=ActiveBrowsersResponse,
     operation_id="get_active_browsers",
     summary="List active browsers.",
-    description="List all running browsers.",
 )
 async def get_active_browsers():
     """List active browsers."""
     try:
-        profile_manager = get_profile_manager()
-        active_browsers = await profile_manager.get_active_browsers()
-        allowed = await visible_profile_ids()
-        if allowed is not None:
-            active_browsers = [
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key in {"profile_id", "process_id", "started_at"}
-                }
-                for item in active_browsers
-                if item["profile_id"] in allowed
-            ]
-
+        active_browsers = await get_profile_manager().get_active_browsers()
         return {"active_browsers": active_browsers, "count": len(active_browsers)}
-
     except Exception as e:
         logger.error(f"Failed to list active browsers: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post(
@@ -1020,35 +854,11 @@ async def get_active_browsers():
     response_model=BrowsersCloseAllResponse,
     operation_id="close_all_browsers",
     summary="Close all browsers.",
-    description="Force-close all active browsers.",
 )
 async def close_all_browsers():
     """Close all active browsers."""
-    allowed = await visible_profile_ids("launch")
-    if allowed is not None:
-        manager = get_profile_manager()
-        active = await manager.get_active_browsers()
-        ids = [item["profile_id"] for item in active if item["profile_id"] in allowed]
-        for profile_id in ids:
-            await require_profile_access(profile_id, "launch")
-        for profile_id in ids:
-            await manager.close_browser(profile_id)
-            await record_audit("close_profile_browser", profile_id)
-        return {
-            "status": "completed",
-            "closed_count": len(ids),
-            "errors": [],
-            "message": f"Closed {len(ids)} browsers",
-        }
     try:
-        profile_manager = get_profile_manager()
-        result = await profile_manager.close_all_browsers()
-
-        logger.info(f"Closed {result['closed_count']} browsers")
-        return result
-
+        return await get_profile_manager().close_all_browsers()
     except Exception as e:
         logger.error(f"Failed to close all browsers: {e}")
-        raise HTTPException(
-            status_code=500, detail=str(e) if is_admin() else "Profile operation failed"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e

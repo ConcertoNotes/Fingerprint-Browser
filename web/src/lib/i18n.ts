@@ -1,14 +1,13 @@
 import zhCN from './locales/zh-CN.json'
-import ru from './locales/ru.json'
 
-export type Locale = 'en' | 'ru' | 'zh-CN'
+export type Locale = 'en' | 'zh-CN'
 export type PluralTranslation = Partial<Record<Intl.LDMLPluralRule, string>> & { other: string }
 export type TranslationCatalog = Record<string, string | PluralTranslation>
 export type TranslationValues = Record<string, string | number | null | undefined>
 export type Translator = (message: string, values?: TranslationValues) => string
 export const LANGUAGE_KEY = 'camoufox-pm.ui-language'
-export const catalogs: Record<Exclude<Locale, 'en'>, TranslationCatalog> = { ru, 'zh-CN': zhCN }
-const pluralRules = { ru: new Intl.PluralRules('ru'), 'zh-CN': new Intl.PluralRules('zh-CN') }
+export const catalogs: Record<Exclude<Locale, 'en'>, TranslationCatalog> = { 'zh-CN': zhCN }
+const pluralRules = { 'zh-CN': new Intl.PluralRules('zh-CN') }
 
 /** English source messages are also the fallback for new server diagnostics. */
 export function translate(locale: Locale, message: string, values: TranslationValues = {}): string {
@@ -24,12 +23,10 @@ export function translate(locale: Locale, message: string, values: TranslationVa
 }
 
 /**
- * The manager starts in Simplified Chinese; a language chosen in the selector
- * is kept. Browser language preferences are deliberately not followed. This is
- * the manager's own interface only: profile browsers keep their fingerprint
- * languages (English by default).
+ * The manager starts in Simplified Chinese; a language chosen in the switcher
+ * is kept. Interface language never changes browser fingerprint languages.
  */
 export function resolveLocale(saved: string | null): Locale {
-  if (saved === 'en' || saved === 'ru' || saved === 'zh-CN') return saved
+  if (saved === 'en' || saved === 'zh-CN') return saved
   return 'zh-CN'
 }

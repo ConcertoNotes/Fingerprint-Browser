@@ -1,21 +1,21 @@
-"""Exclusive recovery operations share the same cross-instance leases as launches."""
+"""Exclusive local profile operations share the same cross-instance leases as launches."""
+
+from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from .leases import ProfileLocked, make_lease_holder
+from .process_lock import profile_lock
 
 
-def profile_data_path(manager, profile) -> Path:
+def profile_data_path(manager: Any, profile: Any) -> Path:
     """Refuse stored paths or symlink directories outside managed profile storage."""
     root = manager.profiles_dir.resolve()
     path = Path(profile.storage_path) if profile.storage_path else root / f"profile_{profile.id}"
     resolved = path.resolve()
-    # Older records stored cwd-relative paths such as data/profiles/profile_ID.
-    # Opening the same DB from a desktop shortcut changes cwd, but its adjacent
-    # canonical profile directory remains authoritative. Never relocate files
-    # or infer a different profile's directory from an arbitrary stored path.
     expected = root / f"profile_{profile.id}"
     if (
         not path.is_absolute()
@@ -37,8 +37,6 @@ async def run_file_operation(function, *args, **kwargs):
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
-        # A second cancellation must not cancel the asyncio wrapper while its
-        # worker thread is still writing protected profile files.
         while not task.done():
             try:
                 await asyncio.shield(task)
@@ -51,12 +49,11 @@ async def run_file_operation(function, *args, **kwargs):
 
 @asynccontextmanager
 async def _profile_operation(
-    manager,
+    manager: Any,
     profile_id: str,
     include_deleted: bool = False,
     *,
     holder: str | None = None,
-    sync_operation: bool = False,
 ):
     """Reserve one closed profile across processes, with renewal during long I/O."""
     profile = await manager.storage.get_profile(profile_id, include_deleted=include_deleted)
@@ -70,7 +67,7 @@ async def _profile_operation(
         lease = await manager.storage.get_lease(profile_id)
         raise ProfileLocked(profile_id, lease[0] if lease else None)
 
-    async def renew():
+    async def renew() -> None:
         while True:
             await asyncio.sleep(30)
             if not await manager.storage.renew_lease([profile_id], holder, ttl):
@@ -78,21 +75,15 @@ async def _profile_operation(
 
     heartbeat = asyncio.create_task(renew())
     try:
-        # Re-read after acquiring: trash/edit operations might have won first.
         profile = await manager.storage.get_profile(profile_id, include_deleted=include_deleted)
         if profile is None:
             raise ValueError(f"Profile with ID {profile_id} not found")
-        if not sync_operation:
-            from .sync_guard import guard_profile
-
-            await guard_profile(manager, profile_id, profile=profile)
         yield profile
         if heartbeat.done():
             heartbeat.result()
     finally:
         heartbeat.cancel()
         try:
-            # Do not swallow cancellation of the caller during this await.
             await asyncio.gather(heartbeat, return_exceptions=True)
         finally:
             await manager.storage.release_lease(profile_id, holder)
@@ -100,17 +91,14 @@ async def _profile_operation(
 
 @asynccontextmanager
 async def profile_operation(
-    manager,
+    manager: Any,
     profile_id: str,
     include_deleted: bool = False,
     *,
     holder: str | None = None,
-    sync_operation: bool = False,
 ):
-    from .sync_admission import profile_admission
-
-    async with profile_admission(manager, profile_id):
+    async with profile_lock(manager, profile_id):
         async with _profile_operation(
-            manager, profile_id, include_deleted, holder=holder, sync_operation=sync_operation
+            manager, profile_id, include_deleted, holder=holder
         ) as profile:
             yield profile

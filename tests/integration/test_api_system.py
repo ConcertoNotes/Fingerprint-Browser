@@ -10,13 +10,13 @@ from camoufox_pm.config import get_settings
 from camoufox_pm.core.browser_session import BrowserSession
 
 
-class FakeCamoufox:
-    """Stands in for a running AsyncCamoufox and records that it was closed."""
+class FakeNetwork:
+    """Stands in for a running per-profile proxy runtime and records teardown."""
 
     def __init__(self):
         self.exits = 0
 
-    async def __aexit__(self, *_exc):
+    async def close(self):
         self.exits += 1
 
 
@@ -55,13 +55,19 @@ async def test_status_reports_what_is_there(client):
     assert body["total_profiles"] == 2
     assert body["total_groups"] == 1
     assert body["running_browsers"] == 0
+    assert body["cloud_policy_source"] in {"builtin", "cloud"}
+    assert body["cloud_policy_version"]
+    assert isinstance(body["mihomo_available"], bool)
+    assert isinstance(body["browser_installed"], bool)
+    assert body["memory_total_mb"] >= 0
+    assert body["uptime_seconds"] >= 0
 
 
 @pytest.mark.asyncio
 async def test_status_counts_a_running_browser(client):
     await client.post("/api/profiles", json={"name": "one"})
     manager = get_profile_manager()
-    manager.browser_sessions.active_sessions["p1"] = BrowserSession("p1", camoufox=FakeCamoufox())
+    manager.browser_sessions.active_sessions["p1"] = BrowserSession("p1", network=FakeNetwork())
 
     body = (await client.get("/api/system/status")).json()
 
@@ -119,17 +125,17 @@ async def test_a_dry_run_reports_the_orphan_without_removing_it(client, storage_
 @pytest.mark.asyncio
 async def test_restart_closes_every_running_browser(client):
     manager = get_profile_manager()
-    camoufoxes = [FakeCamoufox(), FakeCamoufox()]
-    for profile_id, camoufox in zip(("p1", "p2"), camoufoxes, strict=True):
+    networks = [FakeNetwork(), FakeNetwork()]
+    for profile_id, network in zip(("p1", "p2"), networks, strict=True):
         manager.browser_sessions.active_sessions[profile_id] = BrowserSession(
-            profile_id, camoufox=camoufox
+            profile_id, network=network
         )
 
     response = await client.post("/api/system/restart")
 
     assert response.status_code == 200
     assert response.json()["success"] is True
-    assert [c.exits for c in camoufoxes] == [1, 1]
+    assert [n.exits for n in networks] == [1, 1]
     assert manager.browser_sessions.list_active() == []
 
 

@@ -1,15 +1,17 @@
-// Regenerate native icons from the shared SVG after `npm ci --prefix web`.
+// Regenerate native icons and web favicon from packaging/prism-browser.svg after `npm ci --prefix web`.
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 // Next's installed sharp dependency provides the SVG renderer on all build hosts.
 const require = createRequire(new URL("../web/package.json", import.meta.url));
 const sharp = require("sharp");
-const asset = (name) => new URL(`../packaging/camoufox-pm.${name}`, import.meta.url);
+const asset = (name) => new URL(`../packaging/prism-browser.${name}`, import.meta.url);
+const faviconPath = new URL("../web/src/app/favicon.ico", import.meta.url);
+
 const svg = await readFile(asset("svg"));
 const sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
 const images = new Map(await Promise.all(sizes.map(async (size) => [
-  // Rasterize the 128-unit SVG at 1024px before making the smaller variants.
+  // Rasterize the 128-unit SVG at 1024px (density 576) before scaling down.
   size, await sharp(svg, { density: 576 }).resize(size, size).png().toBuffer(),
 ])));
 await writeFile(asset("png"), images.get(1024));
@@ -31,7 +33,7 @@ header.write("icns");
 header.writeUInt32BE(8 + chunks.reduce((sum, chunk) => sum + chunk.length, 0), 4);
 await writeFile(asset("icns"), Buffer.concat([header, ...chunks]));
 
-// Windows ICO directory followed by PNG images (Windows Vista and later).
+// Windows ICO + web favicon (PNG images inside ICO directory, Vista and later).
 const windowsSizes = sizes.filter((size) => size <= 256);
 const directory = Buffer.alloc(6 + windowsSizes.length * 16);
 directory.writeUInt16LE(1, 2);
@@ -47,5 +49,7 @@ windowsSizes.forEach((size, index) => {
   directory.writeUInt32LE(offset, entry + 12);
   offset += image.length;
 });
-await writeFile(asset("ico"), Buffer.concat([directory, ...windowsSizes.map((size) => images.get(size))]));
-console.log("Generated PNG, ICNS and ICO from packaging/camoufox-pm.svg");
+const icoBuffer = Buffer.concat([directory, ...windowsSizes.map((size) => images.get(size))]);
+await writeFile(asset("ico"), icoBuffer);
+await writeFile(faviconPath, icoBuffer);
+console.log("Generated PNG, ICNS, ICO and web/src/app/favicon.ico from packaging/prism-browser.svg");

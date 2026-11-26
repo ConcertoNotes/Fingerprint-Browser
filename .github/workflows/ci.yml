@@ -3,8 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every pull request, not only those targeting main: a PR stacked on another
-  # branch got no checks at all, which is when review needs them most.
   pull_request:
 
 concurrency:
@@ -26,19 +24,15 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: uv sync --extra dev --extra chrome-migration --extra updates --extra sync --python ${{ matrix.python-version }}
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
       - name: Lint
-        run: uv run ruff check src tests scripts/configure_ci_apt.py
+        run: uv run ruff check src cloud_server tests scripts/prepare_bundled_runtime.py scripts/build_desktop.py scripts/build_webui.py
       - name: Format
-        run: uv run ruff format --check src tests scripts/configure_ci_apt.py
+        run: uv run ruff format --check src cloud_server tests scripts/prepare_bundled_runtime.py scripts/build_desktop.py scripts/build_webui.py
       - name: Type-check
-        run: uv run mypy src/camoufox_pm
-      - name: Type-check workflow execution bodies
-        run: uv run mypy --check-untyped-defs src/camoufox_pm/core/workflows.py src/camoufox_pm/core/workflow_store.py src/camoufox_pm/core/workflow_models.py src/camoufox_pm/api/routes/workflows.py
+        run: uv run mypy src/camoufox_pm cloud_server
       - name: Test
-        # Owned SQLite/TCP resources close on failure and cancellation. Catch
-        # destructor warnings through pytest's unraisable-exception hook too.
-        run: uv run pytest -m "not browser and not mihomo" --cov --cov-report=term-missing -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true
+        run: uv run pytest --no-network -m "not mihomo" --cov --cov-report=term-missing -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true
 
   frontend:
     name: Frontend
@@ -50,74 +44,38 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Lint
         run: npm run lint
-      - name: Test translations
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Unit tests
         run: npm test
-      - name: Build
-        run: npm run build
       - name: Build (static export)
         run: npm run build:static
         env:
           NEXT_EXPORT: "1"
       - name: Verify static export output
         run: test -f out/index.html
-      - name: Install uv for UI smoke tests
-        uses: astral-sh/setup-uv@v7
+
+  electron:
+    name: Electron Shell
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: electron
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          enable-cache: true
-      - name: Install UI smoke test dependencies
-        working-directory: .
-        run: uv sync --extra dev
-      - name: Install Chromium for UI smoke tests
-        working-directory: .
-        run: |
-          sudo python3 scripts/configure_ci_apt.py --root /
-          uv run playwright install --with-deps chromium
-      - name: Test desktop UI contracts
-        working-directory: .
-        run: uv run python web/tests/stage_one_ui.py
-      - name: Proxy protocol guidance and authentication UI contracts
-        working-directory: .
-        run: uv run python web/tests/proxy_protocol_ui.py
-
-      - name: Russian and Chinese onboarding and workflow contracts
-        working-directory: .
-        run: uv run python web/tests/localization_ui.py
-
-      - name: Declarative automation workflow UI contracts
-        working-directory: .
-        run: uv run python web/tests/workflows_ui.py
-
-      - name: Test stage two workflows
-        working-directory: .
-        run: uv run python web/tests/stage_two_ui.py
-
-      - name: Stage three access UI contracts
-        working-directory: .
-        run: uv run python web/tests/stage_three_ui.py
-
-      - name: Batch profile operation UI contracts
-        working-directory: .
-        run: uv run python web/tests/batch_operations_ui.py
-
-      - name: Template batch creation UI contracts
-        working-directory: .
-        run: uv run python web/tests/template_batches_ui.py
-
-      - name: Sequential proxy assignment UI contracts
-        working-directory: .
-        run: uv run python web/tests/proxy_sequence_ui.py
-
-      - name: Synchronization onboarding UI contracts
-        working-directory: .
-        run: uv run python web/tests/sync_ui.py
-
-      - name: Synchronization profile UI contracts
-        working-directory: .
-        run: uv run python web/tests/sync_profile_ui.py
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Unit tests
+        run: npm test

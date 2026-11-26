@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from camoufox_pm.api.dependencies import get_profile_manager
-from camoufox_pm.core import fingerprint_store
+from camoufox_pm.core.isolation.chrome_presets import DEFAULT_CHROME_MAJOR
 from camoufox_pm.core.models import UsageStats
 
 
@@ -109,7 +109,8 @@ async def test_create_keeps_generated_values_for_omitted_fields(client):
     assert settings["os"] == "windows"
     assert settings["screen"], "screen should have been generated"
     assert settings["hardware_concurrency"], "hardware_concurrency should have been generated"
-    assert settings["timezone"] is None, "a generated profile takes its timezone from the proxy"
+    assert settings["timezone"] == "America/Los_Angeles"
+    assert settings["languages"] == ["en-US", "en"]
     assert settings["geolocation"] is None, "coordinates would turn the IP lookup off"
 
 
@@ -284,17 +285,9 @@ async def test_preset_catalogue_is_listed(client):
     assert first["screen"]
 
 
-@pytest.mark.browser
 @pytest.mark.asyncio
 async def test_creating_from_a_preset_pins_that_device(client):
-    """The pinned machine must be the device the user picked, not a generated one.
-
-    Marked ``browser``: pinning resolves a full Camoufox config, which needs the
-    browser binary. Without the marker this would be skipped by the fast suite
-    and absent from the browser suite — covered by neither.
-    """
-    if not fingerprint_store.can_resolve():
-        pytest.skip("pinning a preset needs the Camoufox browser on disk")
+    """The pinned machine must be the device the user picked, resolved fully offline."""
     listed = await client.get("/api/fingerprints/presets", params={"os": "windows"})
     preset = listed.json()["data"]["presets"][2]
 
@@ -310,12 +303,8 @@ async def test_creating_from_a_preset_pins_that_device(client):
     assert body["browser_settings"]["os"] == "windows"
 
 
-@pytest.mark.browser
 @pytest.mark.asyncio
 async def test_explicit_settings_still_beat_the_preset(client):
-    if not fingerprint_store.can_resolve():
-        pytest.skip("pinning a preset needs the Camoufox browser on disk")
-
     listed = await client.get("/api/fingerprints/presets", params={"os": "windows"})
     preset = listed.json()["data"]["presets"][0]
 
@@ -331,42 +320,31 @@ async def test_explicit_settings_still_beat_the_preset(client):
 
 
 @pytest.mark.asyncio
-async def test_preset_without_the_browser_says_so(client, monkeypatch):
-    """The catalogue reads without the browser; pinning does not.
-
-    Creating the profile anyway would give the user a generated machine instead
-    of the device they picked, and never tell them.
-    """
-    monkeypatch.setattr(fingerprint_store, "can_resolve", lambda: False)
-
+async def test_preset_pins_offline_without_requiring_browser_binary(client):
+    """The curated Chrome preset engine resolves real device presets offline."""
     listed = await client.get("/api/fingerprints/presets", params={"os": "windows"})
-    assert listed.json()["data"]["presets"], "the catalogue ships with the package"
+    presets = listed.json()["data"]["presets"]
+    assert presets, "the catalogue ships with the package"
 
     response = await client.post(
-        "/api/profiles", json={"name": "no-browser", "fingerprint_preset": "windows:0"}
+        "/api/profiles", json={"name": "offline-preset", "fingerprint_preset": presets[0]["id"]}
     )
-    assert response.status_code == 400
-    assert "camoufox fetch" in response.json()["detail"]
+    assert response.status_code == 201
+    body = response.json()
+    assert body["fingerprint"] is not None
+    assert body["fingerprint_hash"].startswith("FP-")
+    assert body["isolation"]["preset_id"] == presets[0]["id"]
 
 
 @pytest.mark.asyncio
 async def test_a_preset_that_cannot_be_pinned_creates_nothing(client, monkeypatch):
-    """Resolution can fail for reasons other than a missing browser.
-
-    Creating the profile anyway would leave it unpinned, and its first launch
-    would quietly assign a generated machine instead of the chosen device — the
-    exact outcome the preset feature exists to prevent.
-    """
-    monkeypatch.setattr(fingerprint_store, "can_resolve", lambda: True)
-    monkeypatch.setattr(fingerprint_store, "resolve", lambda *a, **k: {})
-
+    """An invalid or failing preset allocation must abort cleanly without creating a row."""
     before = (await client.get("/api/profiles")).json()["total"]
     response = await client.post(
-        "/api/profiles", json={"name": "unpinnable", "fingerprint_preset": "windows:0"}
+        "/api/profiles", json={"name": "unpinnable", "fingerprint_preset": "windows:999999"}
     )
 
     assert response.status_code == 400
-    assert "Could not pin" in response.json()["detail"]
     after = (await client.get("/api/profiles")).json()["total"]
     assert after == before, "a profile that could not be pinned must not be created"
 
@@ -410,39 +388,15 @@ async def test_unknown_preset_is_rejected(client):
     assert "preset" in response.json()["detail"].lower()
 
 
-STALE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0"
-FRESH_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:199.0) Gecko/20100101 Firefox/199.0"
+STALE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+)
 
 
 @pytest.mark.asyncio
-async def test_refresh_browser_version_keeps_the_machine(client, monkeypatch):
-    """A pin must be able to move to a newer browser without changing device.
-
-    A pin never ages on its own, so a profile kept for months keeps advertising
-    the browser it was created with — and a browser several releases behind is
-    itself unusual enough to notice.
-
-    ``resolve`` is stubbed so this covers the wiring without needing the browser
-    binary; ``tests/browser`` exercises it against a real Camoufox.
-    """
-    from camoufox_pm.api.dependencies import get_profile_manager
-
-    # A newly resolved fingerprint describes a completely different machine.
-    monkeypatch.setattr(
-        fingerprint_store,
-        "resolve",
-        lambda *a, **k: {
-            "navigator.userAgent": FRESH_UA,
-            "navigator.hardwareConcurrency": 2,
-            "screen.width": 800,
-            "screen.height": 600,
-            "webGl:renderer": "ANGLE (Intel, Intel(R) HD Graphics)",
-            "canvas:seed": 999999,
-            "fonts:spacing_seed": 5,
-        },
-    )
-    monkeypatch.setattr(fingerprint_store, "installed_major", lambda: 199)
-
+async def test_refresh_browser_version_keeps_the_machine(client):
+    """A pin must be able to move to the current Chrome version without changing hardware."""
     created = await client.post("/api/profiles", json={"name": "ageing"})
     profile_id = created.json()["id"]
 
@@ -450,52 +404,53 @@ async def test_refresh_browser_version_keeps_the_machine(client, monkeypatch):
     profile = await manager.get_profile(profile_id)
     # A pin as it would look after months on an older release.
     profile.fingerprint = {
-        "navigator.userAgent": STALE_UA,
-        "navigator.hardwareConcurrency": 12,
-        "screen.width": 2560,
-        "screen.height": 1440,
-        "webGl:renderer": "ANGLE (NVIDIA, GeForce GTX 980)",
-        "canvas:seed": 424242,
-        "fonts:spacing_seed": 777,
+        "user_agent": STALE_UA,
+        "platform": "Win32",
+        "hardware_concurrency": 12,
+        "screen_width": 2560,
+        "screen_height": 1440,
+        "webgl_renderer": "ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "canvas_seed": "a1b2c3d4e5f60718",
+        "audio_seed": "1807f6e5d4c3b2a1",
+        "webgl_seed": "0011223344556677",
     }
     await manager.storage.update_profile(profile)
 
     stale = (await client.get(f"/api/profiles/{profile_id}")).json()["fingerprint"]
-    assert stale["browser_major"] == 100
+    assert stale["browser_major"] == 110
     assert stale["browser_outdated"] is True
 
     response = await client.post(f"/api/profiles/{profile_id}/refresh-browser")
     assert response.status_code == 200
     refreshed = response.json()["fingerprint"]
 
-    assert refreshed["browser_major"] == 199, "the browser should have moved forward"
+    assert refreshed["browser_major"] == DEFAULT_CHROME_MAJOR
     assert refreshed["browser_outdated"] is False
     # The device is unchanged.
     assert refreshed["screen"] == "2560x1440"
     assert refreshed["hardware_concurrency"] == 12
-    assert refreshed["gpu"] == "ANGLE (NVIDIA, GeForce GTX 980)"
+    assert "GeForce GTX 980" in refreshed["gpu"]
 
     stored = await manager.get_profile(profile_id)
-    assert stored.fingerprint["canvas:seed"] == 424242, "changing the seed would alter the canvas"
-    assert stored.fingerprint["fonts:spacing_seed"] == 777
+    assert stored.fingerprint["canvas_seed"] == "a1b2c3d4e5f60718"
+    assert stored.fingerprint["audio_seed"] == "1807f6e5d4c3b2a1"
 
 
 WINDOWS_PIN = {
-    "navigator.userAgent": STALE_UA,
-    "navigator.platform": "Win32",
-    "navigator.oscpu": "Windows NT 10.0; Win64; x64",
-    "navigator.hardwareConcurrency": 12,
-    "screen.width": 2560,
-    "screen.height": 1440,
-    "webGl:renderer": "ANGLE (NVIDIA, GeForce GTX 980)",
-    "canvas:seed": 424242,
+    "user_agent": STALE_UA,
+    "platform": "Win32",
+    "hardware_concurrency": 12,
+    "screen_width": 2560,
+    "screen_height": 1440,
+    "webgl_renderer": "ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "canvas_seed": "a1b2c3d4e5f60718",
+    "audio_seed": "1807f6e5d4c3b2a1",
+    "webgl_seed": "0011223344556677",
 }
 
 
 async def _pinned_windows_profile_set_to(client, os_name: str) -> str:
     """A profile whose pin says Windows while its setting says something else."""
-    from camoufox_pm.api.dependencies import get_profile_manager
-
     created = await client.post("/api/profiles", json={"name": f"drifted-{os_name}"})
     profile_id = created.json()["id"]
     manager = get_profile_manager()
@@ -522,8 +477,6 @@ async def test_a_setting_that_disagrees_with_the_pin_is_reported(client):
 @pytest.mark.asyncio
 async def test_keeping_the_machine_moves_the_setting_and_nothing_else(client):
     """The cheap way out: the profile is the computer it has always been."""
-    from camoufox_pm.api.dependencies import get_profile_manager
-
     profile_id = await _pinned_windows_profile_set_to(client, "macos")
 
     response = await client.post(
@@ -539,24 +492,8 @@ async def test_keeping_the_machine_moves_the_setting_and_nothing_else(client):
 
 
 @pytest.mark.asyncio
-async def test_keeping_the_setting_pins_a_machine_for_it(client, monkeypatch):
-    """The expensive way out: new hardware, resolved for the OS that was chosen."""
-    from camoufox_pm.api.dependencies import get_profile_manager
-
-    asked_for: dict = {}
-
-    def fake_resolve(options, preset=None):
-        asked_for.update(options)
-        return {
-            "navigator.userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:199.0)",
-            "navigator.platform": "MacIntel",
-            "navigator.hardwareConcurrency": 8,
-            "screen.width": 1440,
-            "screen.height": 900,
-            "canvas:seed": 111,
-        }
-
-    monkeypatch.setattr(fingerprint_store, "resolve", fake_resolve)
+async def test_keeping_the_setting_pins_a_machine_for_it(client):
+    """The expensive way out: new hardware, allocated offline for the chosen OS."""
     profile_id = await _pinned_windows_profile_set_to(client, "macos")
 
     response = await client.post(
@@ -564,14 +501,13 @@ async def test_keeping_the_setting_pins_a_machine_for_it(client, monkeypatch):
     )
     assert response.status_code == 200
     body = response.json()
-    assert asked_for["os"] == "macos", "the new machine must be resolved for the chosen OS"
     assert body["fingerprint"]["pinned_os"] == "macos"
     assert body["fingerprint"]["os_mismatch"] is False
-    # The stored screen described the machine that has just been replaced.
-    assert body["browser_settings"]["screen"] == "1440x900"
+    assert body["browser_settings"]["screen"] == body["fingerprint"]["screen"]
 
     stored = await get_profile_manager().get_profile(profile_id)
-    assert stored.fingerprint["canvas:seed"] == 111, "this path is meant to change the hardware"
+    assert stored.fingerprint["canvas_seed"] != WINDOWS_PIN["canvas_seed"]
+    assert stored.fingerprint["platform"] == "MacIntel"
 
 
 @pytest.mark.asyncio
@@ -587,7 +523,9 @@ async def test_reconciling_a_profile_that_already_agrees_is_refused(client):
 
 @pytest.mark.asyncio
 async def test_reconciling_needs_a_pin_and_a_profile(client):
-    created = await client.post("/api/profiles", json={"name": "unpinned"})
+    created = await client.post(
+        "/api/profiles", json={"name": "unpinned", "generate_fingerprint": False}
+    )
     unpinned = await client.post(
         f"/api/profiles/{created.json()['id']}/reconcile-os", json={"keep_machine": True}
     )
@@ -640,7 +578,10 @@ async def test_clear_geography_reports_each_profile_it_was_given(client):
     with_geo = await client.post(
         "/api/profiles", json={"name": "berlin", "browser_settings": {"timezone": "Europe/Berlin"}}
     )
-    without = await client.post("/api/profiles", json={"name": "follows-the-proxy"})
+    without = await client.post(
+        "/api/profiles",
+        json={"name": "follows-the-proxy", "isolation": {"timezone_mode": "follow_exit"}},
+    )
 
     response = await client.post(
         "/api/profiles/clear-geography",
@@ -662,7 +603,9 @@ async def test_clear_geography_needs_at_least_one_profile(client):
 @pytest.mark.asyncio
 async def test_refresh_browser_version_needs_a_pin_first(client):
     """Refreshing an unpinned profile would silently invent a machine."""
-    created = await client.post("/api/profiles", json={"name": "unpinned"})
+    created = await client.post(
+        "/api/profiles", json={"name": "unpinned", "generate_fingerprint": False}
+    )
     response = await client.post(f"/api/profiles/{created.json()['id']}/refresh-browser")
     assert response.status_code == 400
     assert "launch it once" in response.json()["detail"]
@@ -675,22 +618,33 @@ async def test_refresh_browser_version_on_a_missing_profile_is_404(client):
 
 
 @pytest.mark.asyncio
-async def test_fingerprint_is_absent_until_the_first_launch(client):
-    """A profile has no pinned machine until it is opened for the first time."""
-    created = await client.post("/api/profiles", json={"name": "unlaunched"})
-    assert created.json()["fingerprint"] is None
+async def test_fingerprint_is_pinned_immediately_and_deduplicated_on_create(client):
+    """Stage 2 allocates and pins a unique real device immediately on creation."""
+    first = await client.post("/api/profiles", json={"name": "pinned-1"})
+    second = await client.post("/api/profiles", json={"name": "pinned-2"})
+    assert first.status_code == 201 and second.status_code == 201
+    b1, b2 = first.json(), second.json()
+    assert b1["fingerprint"] is not None and b2["fingerprint"] is not None
+    assert b1["fingerprint_hash"].startswith("FP-")
+    assert b1["fingerprint_hash"] != b2["fingerprint_hash"]
+    assert b1["isolation"]["timezone"] == "America/Los_Angeles"
+    assert b1["isolation"]["languages"] == ["en-US", "en"]
+    assert b1["isolation"]["install_webrtc_guard"] is True
+
+    unpinned = await client.post(
+        "/api/profiles", json={"name": "explicit-unpinned", "generate_fingerprint": False}
+    )
+    assert unpinned.json()["fingerprint"] is None
 
 
 @pytest.mark.asyncio
-async def test_regenerating_drops_the_pinned_machine(client):
-    """Otherwise the profile would keep its old hardware forever."""
+async def test_regenerating_allocates_a_new_pinned_machine(client):
+    """Resetting the fingerprint replaces the hardware with a new deduplicated preset."""
     from camoufox_pm.api.dependencies import get_profile_manager
 
     created = await client.post("/api/profiles", json={"name": "repin"})
     profile_id = created.json()["id"]
 
-    # Pin a machine the way a first launch would, using the manager the client
-    # is wired to rather than a second one over a different database.
     manager = get_profile_manager()
     profile = await manager.get_profile(profile_id)
     profile.fingerprint = {"navigator.userAgent": "pinned", "screen.width": 1920}
@@ -701,7 +655,114 @@ async def test_regenerating_drops_the_pinned_machine(client):
 
     reset = await client.post(f"/api/profiles/{profile_id}/reset-fingerprint")
     assert reset.status_code == 200
-    assert reset.json()["fingerprint"] is None
+    assert reset.json()["fingerprint"] is not None
+    assert reset.json()["fingerprint"]["user_agent"] != "pinned"
+    assert reset.json()["fingerprint_hash"].startswith("FP-")
+
+
+@pytest.mark.asyncio
+async def test_stage_two_isolation_endpoints_and_atomic_node_bind(client, monkeypatch, tmp_path):
+    """Preview, preset listing, atomic create+bind, 10-point audit, and reoptimize."""
+    from cryptography.fernet import Fernet
+
+    from camoufox_pm.config import get_settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
+    get_settings.cache_clear()
+    try:
+        # 1. Isolation preview
+        preview = await client.get("/api/v1/profiles/isolation/preview", params={"os": "macos"})
+        assert preview.status_code == 200
+        prev_data = preview.json()["data"]
+        prev_iso = prev_data["isolation"]
+        assert prev_iso["os"] == "macos"
+        assert prev_iso["timezone"] == "America/Los_Angeles"
+        assert prev_iso["languages"] == ["en-US", "en"]
+        assert prev_iso["install_webrtc_guard"] is True
+        assert prev_iso["fingerprint_hash"].startswith("FP-")
+        assert prev_data["summary"]["fingerprint_hash"] == prev_iso["fingerprint_hash"]
+
+        # 2. Filtered presets listing
+        presets_res = await client.get(
+            "/api/v1/profiles/fingerprint-presets", params={"os": "macos"}
+        )
+        assert presets_res.status_code == 200
+        presets = presets_res.json()["data"]["presets"]
+        assert presets and all(p["os"] == "macos" for p in presets)
+        assert all(p["in_use"] is False for p in presets)
+
+        # 3. Create subscription + atomic profile creation with node_id
+        sub_res = await client.post(
+            "/api/v1/network/subscriptions",
+            json={
+                "name": "Atomic Sub",
+                "content": (
+                    "proxies:\n"
+                    '  - {name: "US-LA", type: ss, server: la.example, port: 8388, '
+                    'cipher: aes-128-gcm, password: "pw"}\n'
+                ),
+            },
+        )
+        assert sub_res.status_code == 201
+        nodes_res = await client.get("/api/v1/network/nodes")
+        node_id = nodes_res.json()["data"]["nodes"][0]["id"]
+
+        created = await client.post(
+            "/api/v1/profiles",
+            json={
+                "name": "Atomic LA Profile",
+                "node_id": node_id,
+                "isolation": {
+                    "os": "macos",
+                    "preset_id": presets[0]["id"],
+                    "tier": "strict",
+                    "webrtc_policy": "block",
+                    "canvas_policy": "stable_hardware",
+                    "install_webrtc_guard": True,
+                },
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+        profile_id = body["id"]
+        assert body["isolation"]["preset_id"] == presets[0]["id"]
+        assert body["isolation"]["timezone"] == "America/Los_Angeles"
+
+        # Binding should exist immediately and nodes list should report bound_count=1.
+        binding = (await client.get(f"/api/v1/network/bindings/{profile_id}")).json()["data"][
+            "binding"
+        ]
+        assert binding is not None and binding["node_id"] == node_id
+        nodes_after = (await client.get("/api/v1/network/nodes")).json()["data"]["nodes"]
+        assert nodes_after[0]["bound_count"] == 1
+        assert profile_id in nodes_after[0]["bound_profile_ids"]
+
+        # Preset should now be marked in_use=True.
+        presets_after = (
+            await client.get("/api/v1/profiles/fingerprint-presets", params={"os": "macos"})
+        ).json()["data"]["presets"]
+        assert next(p for p in presets_after if p["id"] == presets[0]["id"])["in_use"] is True
+
+        # 4. 11-point Isolation Audit
+        audit = await client.post(f"/api/v1/profiles/{profile_id}/audit")
+        assert audit.status_code == 200
+        report = audit.json()["data"]
+        assert report["profile_id"] == profile_id
+        assert len(report["checks"]) == 11
+        assert {c["key"] for c in report["checks"]} >= {
+            "webrtc_guard_addon",
+            "full_traffic_tunnel",
+            "fingerprint_unique",
+            "risk_domains_enforced",
+        }
+
+        # 5. Reoptimize preserves hardware identity
+        reopt = await client.post(f"/api/v1/profiles/{profile_id}/reoptimize")
+        assert reopt.status_code == 200
+        assert reopt.json()["fingerprint_hash"] == body["fingerprint_hash"]
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -804,3 +865,311 @@ async def test_clearing_geography_rejects_an_empty_id(client):
     refused = await client.post("/api/v1/profiles/clear-geography", json={"profile_ids": [""]})
 
     assert refused.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_exit_ip_drift_guard_blocks_allows_override_and_cleans_up(
+    client, monkeypatch, tmp_path
+):
+    """Bound session prepare/launch tracks last exit IP/country/city, returns 409 on drift
+    with clean teardown, guards proxy credentials with desktop token, and permits override."""
+    from types import SimpleNamespace
+
+    from cryptography.fernet import Fernet
+
+    from camoufox_pm.config import get_settings
+    from camoufox_pm.core import proxy_check
+    from camoufox_pm.core.models import ProxyConfig, ProxyType
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("CPM_DESKTOP_TOKEN", "test-electron-secret-token")
+    get_settings.cache_clear()
+    try:
+        sub = await client.post(
+            "/api/v1/network/subscriptions",
+            json={
+                "name": "Drift Test Sub",
+                "content": (
+                    "proxies:\n"
+                    '  - {name: "US-1", type: ss, server: us.example, port: 8388, '
+                    'cipher: aes-128-gcm, password: "pw"}\n'
+                ),
+            },
+        )
+        assert sub.status_code == 201
+        node_id = (await client.get("/api/v1/network/nodes")).json()["data"]["nodes"][0]["id"]
+
+        created = await client.post(
+            "/api/v1/profiles",
+            json={"name": "Drift Guarded", "node_id": node_id},
+        )
+        assert created.status_code == 201
+        body = created.json()
+        profile_id = body["id"]
+        assert body["ip_drift_guard"] is True
+        assert body["last_exit_ip"] is None
+
+        manager = get_profile_manager()
+        closed_runtimes: list[str] = []
+        current_exit = {"ip": "203.0.113.10", "country": "US", "city": "Los Angeles"}
+
+        class FakeRuntime:
+            def __init__(self, pid: str):
+                self.profile_id = pid
+                self.node = {"id": node_id, "name": "US-1", "check": {}}
+                self.listener = SimpleNamespace(port=28888, username="u", password="p-secret-loop")
+                self.browser_proxy = {
+                    "server": "http://127.0.0.1:28888",
+                    "username": "u",
+                    "password": "p-secret-loop",
+                }
+                self.proxy_config = ProxyConfig(
+                    type=ProxyType.HTTP,
+                    server="127.0.0.1:28888",
+                    username="u",
+                    password="p-secret-loop",
+                )
+                self.engine = SimpleNamespace(alive=True)
+                self.exit_ip: str | None = None
+                self.exit_country: str | None = None
+                self.exit_city: str | None = None
+
+            def mark_running(self):
+                pass
+
+            async def close(self):
+                closed_runtimes.append(self.profile_id)
+                manager.network.runtimes.pop(self.profile_id, None)
+
+        async def fake_prepare(pid: str):
+            rt = FakeRuntime(pid)
+            manager.network.runtimes[pid] = rt
+            return rt
+
+        async def fake_verify_exit(runtime, _timeout):
+            runtime.exit_ip = current_exit["ip"]
+            return runtime.exit_ip
+
+        def fake_locate(ip: str):
+            return SimpleNamespace(
+                ip=ip,
+                country=current_exit["country"],
+                city=current_exit["city"],
+                timezone="America/Los_Angeles",
+                latitude=34.05,
+                longitude=-118.24,
+            )
+
+        monkeypatch.setattr(manager.network, "prepare", fake_prepare)
+        monkeypatch.setattr(manager.network, "verify_exit", fake_verify_exit)
+        monkeypatch.setattr(proxy_check, "locate", fake_locate)
+
+        # 0. Desktop session endpoints require X-Prism-Desktop-Token when configured.
+        denied = await client.post(f"/api/v1/profiles/{profile_id}/session/prepare", json={})
+        assert denied.status_code == 403
+        assert denied.json()["error"]["code"] == "desktop_token_required"
+
+        desktop_headers = {"X-Prism-Desktop-Token": "test-electron-secret-token"}
+
+        # 1. First session/prepare establishes baseline exit IP, country, city & returns proxy secrets.
+        first = await client.post(
+            f"/api/v1/profiles/{profile_id}/session/prepare",
+            json={},
+            headers=desktop_headers,
+        )
+        assert first.status_code == 200
+        session_data = first.json()["data"]
+        assert session_data["proxy"]["port"] == 28888
+        assert session_data["proxy"]["password"] == "p-secret-loop"
+        assert session_data["exit_ip"] == "203.0.113.10"
+        assert session_data["exit_country"] == "US"
+        assert session_data["exit_city"] == "Los Angeles"
+        assert "Electron/" not in session_data["isolation"]["pinned_fingerprint"]["user_agent"]
+
+        fetched = (await client.get(f"/api/v1/profiles/{profile_id}")).json()
+        assert fetched["last_exit_ip"] == "203.0.113.10"
+        assert fetched["last_exit_country"] == "US"
+        assert fetched["last_exit_at"] is not None
+
+        # Release cleanly via Electron session/release endpoint.
+        released = await client.post(
+            f"/api/v1/profiles/{profile_id}/session/release", headers=desktop_headers
+        )
+        assert released.status_code == 200
+        assert released.json()["data"]["status"] == "closed"
+        assert await manager.storage.get_lease(profile_id) == (None, None)
+
+        # 2. Exit IP + country changes -> blocked with 409 exit_ip_drift, runtime closed & lease freed!
+        current_exit["ip"] = "198.51.100.77"
+        current_exit["country"] = "JP"
+        current_exit["city"] = "Tokyo"
+        drifted = await client.post(f"/api/v1/profiles/{profile_id}/launch", json={})
+        assert drifted.status_code == 409
+        err = drifted.json()["error"]
+        assert err["code"] == "exit_ip_drift"
+        assert err["details"][0] == {
+            "previous_ip": "203.0.113.10",
+            "previous_country": "US",
+            "current_ip": "198.51.100.77",
+            "current_country": "JP",
+            "country_changed": True,
+        }
+        assert profile_id in closed_runtimes
+        assert await manager.storage.get_lease(profile_id) == (None, None)
+
+        # 3. Confirming with allow_ip_drift=True via /launch succeeds without leaking proxy password.
+        confirmed = await client.post(
+            f"/api/v1/profiles/{profile_id}/launch", json={"allow_ip_drift": True}
+        )
+        assert confirmed.status_code == 200
+        assert "p-secret-loop" not in confirmed.text
+        updated = (await client.get(f"/api/v1/profiles/{profile_id}")).json()
+        assert updated["last_exit_ip"] == "198.51.100.77"
+        assert updated["last_exit_country"] == "JP"
+
+        # 4. Disabling ip_drift_guard via PUT allows subsequent IP change without confirmation.
+        await client.post(f"/api/v1/profiles/{profile_id}/session/release", headers=desktop_headers)
+        toggle = await client.put(f"/api/v1/profiles/{profile_id}", json={"ip_drift_guard": False})
+        assert toggle.status_code == 200
+        assert toggle.json()["ip_drift_guard"] is False
+
+        current_exit["ip"] = "192.0.2.55"
+        current_exit["country"] = "DE"
+        current_exit["city"] = "Frankfurt"
+        unblocked = await client.post(f"/api/v1/profiles/{profile_id}/launch")
+        assert unblocked.status_code == 200
+        final_prof = (await client.get(f"/api/v1/profiles/{profile_id}")).json()
+        assert final_prof["last_exit_ip"] == "192.0.2.55"
+        assert final_prof["last_exit_country"] == "DE"
+        await client.post(f"/api/v1/profiles/{profile_id}/session/release", headers=desktop_headers)
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_terminal_and_risk_domain_probe_endpoints(client, monkeypatch, tmp_path):
+    """Verify POST /profiles/{id}/terminal, POST /profiles/{id}/probe-risk-domains,
+    and POST /network/nodes/{node_id}/probe-domains."""
+    from types import SimpleNamespace
+
+    from cryptography.fernet import Fernet
+
+    from camoufox_pm.config import get_settings
+    from camoufox_pm.core import isolated_terminal
+    from camoufox_pm.core.models import ProxyConfig, ProxyType
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
+    get_settings.cache_clear()
+    try:
+        # Unbound profile -> terminal returns 409, risk probe returns 409 no_bound_node.
+        unbound = (await client.post("/api/v1/profiles", json={"name": "Unbound"})).json()
+        t_stopped = await client.post(f"/api/v1/profiles/{unbound['id']}/terminal")
+        assert t_stopped.status_code == 409
+        assert t_stopped.json()["error"]["code"] == "terminal_requires_running_node"
+
+        p_unbound = await client.post(f"/api/v1/profiles/{unbound['id']}/probe-risk-domains")
+        assert p_unbound.status_code == 409
+        assert p_unbound.json()["error"]["code"] == "no_bound_node"
+
+        # Create node + bound profile.
+        sub = await client.post(
+            "/api/v1/network/subscriptions",
+            json={
+                "name": "Risk Sub",
+                "content": (
+                    "proxies:\n"
+                    '  - {name: "US-LA", type: ss, server: la.example, port: 8388, '
+                    'cipher: aes-128-gcm, password: "pw"}\n'
+                ),
+            },
+        )
+        assert sub.status_code == 201
+        node_id = (await client.get("/api/v1/network/nodes")).json()["data"]["nodes"][0]["id"]
+        bound = (
+            await client.post("/api/v1/profiles", json={"name": "Bound", "node_id": node_id})
+        ).json()
+        profile_id = bound["id"]
+
+        # Attach fake live runtime so both terminal and risk probes reuse it offline.
+        manager = get_profile_manager()
+        secret_pw = "SuperSecretLoopback99"
+        manager.network.runtimes[profile_id] = SimpleNamespace(
+            profile_id=profile_id,
+            node={
+                "id": node_id,
+                "name": "US-LA",
+                "check": {"exit_ip": "203.0.113.5", "country_iso": "US"},
+            },
+            listener=SimpleNamespace(port=29999, username="loop-u", password=secret_pw),
+            proxy_config=ProxyConfig(
+                type=ProxyType.HTTP, server="127.0.0.1:29999", username="loop-u", password=secret_pw
+            ),
+            engine=SimpleNamespace(alive=True),
+            exit_ip="203.0.113.5",
+            exit_country="US",
+        )
+
+        # Mock native terminal spawn + risk domain prober.
+        spawned_paths = []
+        monkeypatch.setattr(
+            isolated_terminal,
+            "spawn_terminal",
+            lambda script_path, _cmd, **_kw: spawned_paths.append(script_path),
+        )
+
+        term_res = await client.post(f"/api/v1/profiles/{profile_id}/terminal")
+        assert term_res.status_code == 200
+        term_data = term_res.json()["data"]
+        assert term_data["profile_id"] == profile_id
+        assert term_data["proxy_port"] == 29999
+        assert term_data["exit_ip"] == "203.0.113.5"
+        assert term_data["exit_country"] == "US"
+        assert term_data["launched"] is True
+        assert secret_pw not in term_res.text
+        assert spawned_paths and spawned_paths[0].is_file()
+
+        async def fake_prober(_proxy, domain: str, category: str, _timeout: float):
+            if domain == "withpersona.com":
+                return {
+                    "domain": domain,
+                    "category": category,
+                    "reachable": False,
+                    "status_code": None,
+                    "latency_ms": 500,
+                    "error": "timeout",
+                }
+            return {
+                "domain": domain,
+                "category": category,
+                "reachable": True,
+                "status_code": 200,
+                "latency_ms": 42,
+                "error": None,
+            }
+
+        manager.network_probe.risk_domain_prober = fake_prober
+
+        node_probe = await client.post(f"/api/v1/network/nodes/{node_id}/probe-domains")
+        assert node_probe.status_code == 200
+        node_report = node_probe.json()["data"]
+        assert node_report["node_id"] == node_id
+        assert node_report["exit_ip"] == "203.0.113.5"
+        assert node_report["total_enforced_domains"] == 38
+        assert node_report["total_enforced_cidrs"] == 4
+        assert node_report["summary"] == {"ok": 9, "total": 10}
+        assert len(node_report["probes"]) == 10
+
+        prof_probe = await client.post(f"/api/v1/profiles/{profile_id}/probe-risk-domains")
+        assert prof_probe.status_code == 200
+        prof_report = prof_probe.json()["data"]
+        assert prof_report["node_id"] == node_id
+        assert prof_report["summary"] == {"ok": 9, "total": 10}
+        assert set(prof_report["risk_probe_groups"]) == {
+            "core",
+            "antifraud_telemetry",
+            "challenge_kyc",
+        }
+    finally:
+        get_settings.cache_clear()

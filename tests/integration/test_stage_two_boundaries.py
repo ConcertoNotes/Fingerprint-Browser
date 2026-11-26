@@ -1,4 +1,4 @@
-"""Shared stage-two boundaries: authentication, aliases and secret-safe errors."""
+"""Shared API boundaries: authentication, aliases and secret-safe errors."""
 
 import pytest
 
@@ -9,9 +9,9 @@ from camoufox_pm.config import get_settings
 @pytest.mark.parametrize(
     "method,path,payload",
     [
-        ("GET", "/templates", None),
-        ("GET", "/extensions", None),
-        ("GET", "/saved-filters", None),
+        ("GET", "/profiles/isolation/preview", None),
+        ("GET", "/profiles/fingerprint-presets", None),
+        ("GET", "/cloud/status", None),
         ("POST", "/profiles/example/cookies/preview", {"format": "json", "text": "[]"}),
         (
             "POST",
@@ -24,7 +24,6 @@ from camoufox_pm.config import get_settings
             },
         ),
         ("GET", "/profiles/example/cookies/export?format=json&row_version=0", None),
-        ("PUT", "/profiles/example/extensions", {"extension_ids": [], "row_version": 0}),
         (
             "POST",
             "/profiles/tags",
@@ -36,7 +35,7 @@ from camoufox_pm.config import get_settings
         ),
     ],
 )
-async def test_stage_two_requires_auth_on_both_prefixes(
+async def test_api_routes_require_auth_on_both_prefixes(
     client, monkeypatch, prefix, method, path, payload
 ):
     monkeypatch.setenv("CPM_API_KEY", "stage-two-test-key")

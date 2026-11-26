@@ -121,9 +121,8 @@ async def test_proxy_password_is_encrypted_at_rest(storage, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_pre_auth_database_gains_the_user_tables_without_losing_data(tmp_path):
-    """An install from before user accounts has no users/sessions tables; opening
-    it must add them and leave the existing rows exactly as they were."""
+async def test_a_legacy_database_gains_v8_tables_without_losing_data(tmp_path):
+    """An older SQLite install without v8 tables must migrate cleanly and preserve rows."""
     import sqlite3
 
     from camoufox_pm.core.database import StorageManager
@@ -151,10 +150,15 @@ async def test_a_pre_auth_database_gains_the_user_tables_without_losing_data(tmp
     storage = StorageManager(str(db_path))
     await storage.initialize()
     try:
-        assert (await storage.get_profile("p1")).name == "survivor"
-        assert await storage.count_users() == 0
-        await storage.create_user("u1", "alice", "hash")
-        assert await storage.count_users() == 1
+        loaded = await storage.get_profile("p1")
+        assert loaded is not None and loaded.name == "survivor"
+        tables = {
+            row[0]
+            for row in storage.db._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert {"cloud_settings", "cloud_cache", "network_subscriptions"} <= tables
     finally:
         await storage.close()
 

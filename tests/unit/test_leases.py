@@ -11,7 +11,6 @@ import asyncio
 import pytest
 
 from camoufox_pm.config import Settings
-from camoufox_pm.core import profile_manager as pm_module
 from camoufox_pm.core.database import StorageManager
 from camoufox_pm.core.leases import ProfileLocked, lease_expired, make_lease_holder
 from camoufox_pm.core.models import BrowserSettings, Profile
@@ -180,17 +179,19 @@ def launches(profile_manager, monkeypatch):
 
     class FakeSession:
         process_id = 4242
+        network = None
 
         async def terminate(self):
             pass
 
-    async def fake_launch(profile_id, options, on_exit=None):
+    async def fake_launch(profile_id, options, on_exit=None, network=None):
         recorded.append(options)
-        profile_manager.browser_sessions.active_sessions[profile_id] = FakeSession()
-        return FakeSession()
+        session = FakeSession()
+        session.network = network
+        profile_manager.browser_sessions.active_sessions[profile_id] = session
+        return session
 
     monkeypatch.setattr(profile_manager.browser_sessions, "launch", fake_launch)
-    monkeypatch.setattr(pm_module.fingerprint_store, "resolve", lambda *_a, **_kw: {})
     return recorded
 
 

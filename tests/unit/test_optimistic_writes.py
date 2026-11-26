@@ -227,32 +227,17 @@ async def test_an_edit_without_a_version_still_works(profile_manager):
     assert updated.notes == "no version sent"
 
 
-async def test_an_edit_after_a_launch_keeps_the_pinned_machine(profile_manager, monkeypatch):
+async def test_an_edit_after_a_launch_keeps_the_pinned_machine(profile_manager):
     """The path users actually take: the manager re-reads, so nothing is reverted."""
-    from camoufox_pm.core import profile_manager as pm_module
-
-    class FakeSession:
-        process_id = 1
-
-        async def terminate(self):
-            pass
-
-    async def fake_launch(profile_id, options, on_exit=None):
-        profile_manager.browser_sessions.active_sessions[profile_id] = FakeSession()
-        return FakeSession()
-
-    monkeypatch.setattr(profile_manager.browser_sessions, "launch", fake_launch)
-    monkeypatch.setattr(
-        pm_module.fingerprint_store, "resolve", lambda *_a, **_kw: {"navigator.userAgent": "pinned"}
-    )
-
-    profile = await profile_manager.create_profile(name="p")
+    profile = await profile_manager.create_profile(name="p", generate_fingerprint=False)
     await profile_manager.launch_browser(profile.id)
+    pinned_after_launch = (await profile_manager.get_profile(profile.id)).fingerprint
+    assert pinned_after_launch and "user_agent" in pinned_after_launch
 
     await profile_manager.update_profile(profile.id, {"notes": "edited after the launch"})
 
     stored = await profile_manager.get_profile(profile.id)
-    assert stored.fingerprint == {"navigator.userAgent": "pinned"}
+    assert stored.fingerprint == pinned_after_launch
     assert stored.notes == "edited after the launch"
     assert stored.last_used is not None
 
@@ -260,39 +245,29 @@ async def test_an_edit_after_a_launch_keeps_the_pinned_machine(profile_manager, 
 async def test_an_edit_made_while_a_launch_resolves_is_not_reverted(profile_manager, monkeypatch):
     """The hazard the launch path used to carry, reproduced.
 
-    resolve() can go to the network, and a launch used to write the whole
-    Profile back afterwards — reverting anything saved during that wait. Here
-    the rename lands while resolve is running, exactly as another instance's
-    save would.
+    A launch must only apply a targeted launch-pin update rather than rewriting
+    the whole Profile row — so a concurrent rename saved mid-launch survives.
     """
     from camoufox_pm.core import profile_manager as pm_module
 
-    class FakeSession:
-        process_id = 1
+    profile = await profile_manager.create_profile(
+        name="before the launch", generate_fingerprint=False
+    )
 
-        async def terminate(self):
-            pass
+    real_allocate = pm_module.allocate_isolation
 
-    async def fake_launch(profile_id, options, on_exit=None):
-        profile_manager.browser_sessions.active_sessions[profile_id] = FakeSession()
-        return FakeSession()
-
-    profile = await profile_manager.create_profile(name="before the launch")
-
-    def resolve_slowly(*_args, **_kwargs):
-        # Another instance saving mid-resolve. Written through the connection
-        # because this runs synchronously inside the launch.
+    def allocate_with_concurrent_edit(*args, **kwargs):
+        # Another instance saving mid-allocation.
         profile_manager.storage.db._connection.execute(  # noqa: SLF001
             "UPDATE profiles SET name = ? WHERE id = ?", ("renamed during the launch", profile.id)
         )
         profile_manager.storage.db._connection.commit()  # noqa: SLF001
-        return {"navigator.userAgent": "pinned"}
+        return real_allocate(*args, **kwargs)
 
-    monkeypatch.setattr(profile_manager.browser_sessions, "launch", fake_launch)
-    monkeypatch.setattr(pm_module.fingerprint_store, "resolve", resolve_slowly)
+    monkeypatch.setattr(pm_module, "allocate_isolation", allocate_with_concurrent_edit)
 
     await profile_manager.launch_browser(profile.id)
 
     stored = await profile_manager.get_profile(profile.id)
     assert stored.name == "renamed during the launch"
-    assert stored.fingerprint == {"navigator.userAgent": "pinned"}
+    assert stored.fingerprint and "user_agent" in stored.fingerprint

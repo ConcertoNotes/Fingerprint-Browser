@@ -21,6 +21,7 @@ from typing import Any
 
 from loguru import logger
 
+from .cloud.entitlement import CloudEntitlementError, check_cloud_entitlement, is_cloud_node
 from .mihomo_manager import MihomoProcess, MihomoUnavailable, discover_binary, reap_orphans
 from .models import ProxyConfig, ProxyType
 from .network_catalog import NetworkCatalog, NetworkNotFound, NetworkSecretsUnavailable
@@ -49,6 +50,8 @@ class ProfileNetwork:
         self.listener = engine.listeners[0]
         self.state = "ready"
         self.exit_ip: str | None = None
+        self.exit_country: str | None = None
+        self.exit_city: str | None = None
         self.error: dict[str, str] | None = None
         self.started_at = time.time()
         self.adapter_kind = "mihomo"
@@ -86,6 +89,14 @@ class ProfileNetwork:
         """Restart the same node on the same port with the same credentials."""
         if self._closed:
             raise NetworkLaunchError(409, "not_running", "The profile is not running.")
+        conn = self.registry.manager.storage.db._connection
+        if self.node.get("subscription_managed_by") == "cloud" or is_cloud_node(
+            conn, str(self.node["id"])
+        ):
+            try:
+                check_cloud_entitlement(conn)
+            except CloudEntitlementError as exc:
+                raise NetworkLaunchError(exc.status_code, exc.code, str(exc)) from None
         try:
             await self.engine.restart()
         except MihomoUnavailable as exc:
@@ -115,6 +126,8 @@ class ProfileNetwork:
             "node_name": self.node["name"],
             "listen_port": self.listener.port,
             "exit_ip": self.exit_ip,
+            "exit_country": self.exit_country,
+            "exit_city": self.exit_city,
             "engine_alive": self.engine.alive,
             "started_at": self.started_at,
             "error": self.error,
@@ -161,6 +174,12 @@ class NetworkAdapter:
         node_id = self.binding_node_id(profile_id)
         if node_id is None:
             return None
+        conn = self.manager.storage.db._connection
+        if is_cloud_node(conn, node_id):
+            try:
+                check_cloud_entitlement(conn)
+            except CloudEntitlementError as exc:
+                raise NetworkLaunchError(exc.status_code, exc.code, str(exc)) from None
         catalog = self.catalog()
         try:
             node, outbound = catalog.node_outbound(node_id)

@@ -5,7 +5,6 @@ from cryptography.fernet import Fernet
 
 from camoufox_pm.api import dependencies
 from camoufox_pm.config import get_settings
-from camoufox_pm.core import auth
 
 SECRET = "api-network-node-secret"
 YAML = f"""
@@ -17,7 +16,8 @@ PASSWORD = "strong-test-password"
 
 
 @pytest.fixture
-async def api(client, monkeypatch):
+async def api(client, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
     monkeypatch.delenv("CPM_API_KEY", raising=False)
     get_settings.cache_clear()
@@ -253,33 +253,25 @@ async def test_batch_check_validates_its_input(api):
 
 
 @pytest.mark.asyncio
-async def test_operators_cannot_reach_instance_network_routes(api, monkeypatch):
+async def test_network_routes_respect_api_key(api, monkeypatch):
     await import_yaml(api)
-    storage = dependencies.get_storage_manager()
-    manager = dependencies.get_profile_manager()
-    own = await manager.create_profile("Own", generate_fingerprint=False)
-    await storage.create_user(auth.new_user_id(), "admin", auth.hash_password(PASSWORD))
-    await storage.create_user(
-        auth.new_user_id(), "member", auth.hash_password(PASSWORD), role="operator"
-    )
-    await storage.set_profile_grant("member", own.id)
-    anonymous = await api.get("/api/v1/network/nodes")
-    assert anonymous.status_code == 401
-    login = await api.post("/api/v1/auth/login", json={"username": "member", "password": PASSWORD})
-    assert login.status_code == 200
-    for method, path in (
-        ("GET", "/subscriptions"),
-        ("GET", "/nodes"),
-        ("GET", "/map"),
-        ("GET", "/settings"),
-        ("GET", "/bindings"),
-    ):
-        response = await api.request(method, "/api/v1/network" + path)
-        assert response.status_code == 403, path
-        assert SECRET not in response.text
-    # Their own profile's runtime is visible; another's is indistinguishable from missing.
-    assert (await api.get(f"/api/v1/network/runtime/{own.id}")).status_code == 200
-    assert (await api.get("/api/v1/network/runtime/missing1")).status_code == 404
+    monkeypatch.setenv("CPM_API_KEY", "network-api-secret")
+    get_settings.cache_clear()
+    try:
+        for method, path in (
+            ("GET", "/subscriptions"),
+            ("GET", "/nodes"),
+            ("GET", "/map"),
+            ("GET", "/settings"),
+            ("GET", "/bindings"),
+        ):
+            response = await api.request(method, "/api/v1/network" + path)
+            assert response.status_code == 401, path
+            assert SECRET not in response.text
+        authed = await api.get("/api/v1/network/nodes", headers={"X-API-Key": "network-api-secret"})
+        assert authed.status_code == 200
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

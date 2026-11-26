@@ -1,9 +1,9 @@
-"""噜噜指纹浏览器 — antidetect browser profile management on Camoufox.
+"""棱镜浏览器 (Prism Browser) — strictly isolated antidetect browser manager.
 
 Derived from Camoufox Profile Manager (https://github.com/polyackiy/camoufox-profile-manager,
-MIT). Internal names (the ``camoufox_pm`` package, the ``camoufox-pm`` command,
+MIT). Internal identifiers (the ``camoufox_pm`` package, the ``camoufox-pm`` command,
 ``CPM_*`` settings and the desktop data folder) are kept so existing installs,
-scripts and data keep working.
+scripts and local data continue working seamlessly.
 """
 
 import sys
@@ -27,12 +27,10 @@ else:
         __version__ = "0.0.0+unknown"
 
 # The product name people see. Internal identifiers deliberately stay unchanged.
-APP_NAME = "噜噜指纹浏览器"
+APP_NAME = "棱镜浏览器"
 # For consoles and logs: a Windows console without UTF-8 cannot print APP_NAME.
-APP_NAME_ASCII = "LuLu Fingerprint Browser"
+APP_NAME_ASCII = "Prism Browser"
 REPOSITORY_URL = "https://github.com/ConcertoNotes/Fingerprint-Browser"
 UPSTREAM_URL = "https://github.com/polyackiy/camoufox-profile-manager"
 
-__description__ = (
-    "噜噜指纹浏览器: self-hosted, open-source antidetect browser profile manager built on Camoufox"
-)
+__description__ = "棱镜浏览器 (Prism Browser): local-first isolated antidetect browser manager"

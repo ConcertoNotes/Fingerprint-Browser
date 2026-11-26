@@ -1,7 +1,7 @@
 """Integration tests for the browser-control endpoints.
 
 No browser is started: a stand-in session is registered so the endpoints that
-report and close them can be checked without a Camoufox binary.
+report and close them can be checked without launching Electron.
 """
 
 import pytest
@@ -10,23 +10,23 @@ from camoufox_pm.api.dependencies import get_profile_manager
 from camoufox_pm.core.browser_session import BrowserSession
 
 
-class FakeCamoufox:
-    """Stands in for a running AsyncCamoufox and records that it was closed."""
+class FakeNetwork:
+    """Stands in for a running per-profile proxy runtime and records teardown."""
 
     def __init__(self):
         self.exits = 0
 
-    async def __aexit__(self, *_exc):
+    async def close(self):
         self.exits += 1
 
 
-def register(profile_id: str) -> FakeCamoufox:
-    """Register a running browser for a profile."""
-    camoufox = FakeCamoufox()
+def register(profile_id: str) -> FakeNetwork:
+    """Register a running browser session for a profile."""
+    network = FakeNetwork()
     get_profile_manager().browser_sessions.active_sessions[profile_id] = BrowserSession(
-        profile_id, camoufox=camoufox, process_id=4242
+        profile_id, process_id=4242, network=network
     )
-    return camoufox
+    return network
 
 
 @pytest.mark.asyncio

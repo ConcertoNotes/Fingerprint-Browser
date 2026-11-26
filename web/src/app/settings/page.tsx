@@ -3,13 +3,11 @@
 import { useEffect, useState } from 'react'
 import { Check, Minus, Settings as SettingsIcon, TriangleAlert } from 'lucide-react'
 
-import { useI18n } from '@/components/i18n-provider'
-import type { Translator } from '@/lib/i18n'
-import { SyncSettings } from '@/components/sync-settings'
-import { NetworkSettingsPanel } from '@/components/network-settings'
 import { BrowserSetup } from '@/components/browser-setup'
-import { BackupSettings, UpdateSettings } from '@/components/recovery-settings'
 import { EmptyState } from '@/components/empty-state'
+import { useI18n } from '@/components/i18n-provider'
+import { NetworkSettingsPanel } from '@/components/network-settings'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { useToast } from '@/components/toast'
 import {
   getApiKey,
@@ -18,6 +16,7 @@ import {
   type SystemConfig,
   type SystemStatus,
 } from '@/lib/api'
+import type { Translator } from '@/lib/i18n'
 
 function formatUptime(seconds: number, t: Translator): string {
   if (seconds < 60) return t('{count}s', { count: seconds })
@@ -35,8 +34,6 @@ export default function SettingsPage() {
   const toast = useToast()
 
   useEffect(() => {
-    // The key lives in localStorage, which does not exist when this page is
-    // prerendered into the static export, so it can only be read after mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setKey(getApiKey())
     async function load() {
@@ -61,56 +58,53 @@ export default function SettingsPage() {
   }
 
   return (
-    <>
-      <header className="sticky top-0 z-20 flex h-[52px] items-center gap-3 border-b border-line bg-canvas/85 px-5 backdrop-blur">
-        <h1 className="text-[14px] font-semibold">{t('Settings')}</h1>
+    <div className="min-h-full bg-canvas">
+      <header className="sticky top-0 z-20 flex h-[54px] items-center gap-3 border-b border-line bg-canvas/85 px-6 backdrop-blur-xl app-drag">
+        <h1 className="text-[16px] font-semibold tracking-tight text-ink app-no-drag">{t('System settings')}</h1>
       </header>
 
       {error ? (
         <EmptyState icon={<SettingsIcon size={18} />} title={t('Cannot reach the API')} body={error} />
       ) : !config ? (
-        <p className="px-5 py-8 text-ink-faint">{t('Loading…')}</p>
+        <p className="px-6 py-8 text-ink-faint">{t('Loading…')}</p>
       ) : (
-        <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-5 py-6">
+        <div className="mx-auto flex max-w-[800px] flex-col gap-6 px-6 py-6">
+          <section aria-label={t('Appearance')}>
+            <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
+              {t('Appearance')}
+            </h2>
+            <p className="mb-2.5 text-[12px] text-ink-dim">
+              {t('Switch between Obsidian dark and Porcelain light workspace themes.')}
+            </p>
+            <div className="panel p-4">
+              <ThemeToggle compact={false} />
+            </div>
+          </section>
+
           <BrowserSetup />
           <NetworkSettingsPanel />
-          <UpdateSettings />
-          <BackupSettings />
-          <SyncSettings />
 
-          {/* Security first: these two decide whether this instance is safe to expose. */}
           <Group
-            title={t('Security')}
-            note={t('Configured with environment variables; restart to apply changes.')}
+            title={t('Security & encryption')}
+            note={t('Configured via environment variables or local secret.key; restart to apply changes.')}
           >
             <Toggle
               on={config.encryption_enabled}
-              label={t('Proxy password encryption')}
-              onText={t('Passwords are encrypted at rest with CPM_SECRET_KEY.')}
-              offText={t('Passwords are stored as plain text. Set CPM_SECRET_KEY to encrypt them.')}
+              label={t('Credential encryption')}
+              onText={t('Subscription URLs, proxy passwords, and cloud tokens are encrypted at rest with CPM_SECRET_KEY.')}
+              offText={t('Encryption key missing. Restore secret.key or set CPM_SECRET_KEY to store secrets safely.')}
               warnWhenOff
             />
             <Toggle
-              on={config.user_auth_enabled}
-              label={t('User accounts')}
-              onText={t('Login is required. Manage accounts with: camoufox-pm user')}
-              offText={t('No user accounts. Create one with: camoufox-pm user add <name>')}
-              warnWhenOff={config.host !== '127.0.0.1' && !config.api_key_set}
-            />
-            <Toggle
               on={config.api_key_set}
-              label={t('API key')}
+              label={t('API key protection')}
               onText={t('Requests must send a matching X-API-Key header.')}
-              offText={
-                config.user_auth_enabled
-                  ? t('No API key is set. Machine clients have no way in; humans log in.')
-                  : t('No API key is set. Anyone who can reach this port can use the API.')
-              }
-              warnWhenOff={config.host !== '127.0.0.1' && !config.user_auth_enabled}
+              offText={t('Direct loopback mode (no API key required on 127.0.0.1).')}
+              warnWhenOff={config.host !== '127.0.0.1'}
             />
             {config.api_key_set && (
-              <form onSubmit={saveKey} className="flex items-start gap-4 px-4 py-2.5">
-                <span className="w-[150px] shrink-0 text-ink-dim">{t("This browser's key")}</span>
+              <form onSubmit={saveKey} className="flex items-start gap-4 px-4 py-3">
+                <span className="w-[156px] shrink-0 text-ink-dim">{t("This browser's key")}</span>
                 <span className="flex flex-1 gap-2">
                   <input
                     type="password"
@@ -127,17 +121,15 @@ export default function SettingsPage() {
                 </span>
               </form>
             )}
-            <Row label={t('Bound to')}>
-              <span className="font-mono">
-                {config.host}:{config.port}
-              </span>
+            <Row label={t('Listen address')}>
+              <span className="font-mono">{config.host}:{config.port}</span>
               {config.host !== '127.0.0.1' && (
                 <span className="ml-2 text-danger">{t('reachable beyond this machine')}</span>
               )}
             </Row>
           </Group>
 
-          <Group title={t('Instance')}>
+          <Group title={t('Runtime info')}>
             <Row label={t('Version')}>
               <span className="font-mono">{config.version}</span>
             </Row>
@@ -147,47 +139,32 @@ export default function SettingsPage() {
             <Row label={t('Database')}>
               <span className="break-all font-mono text-ink-dim">{config.database_path}</span>
             </Row>
+            {status && (
+              <>
+                <Row label={t('Browsers / Groups')}>
+                  <span className="font-mono">
+                    {status.total_profiles} ({t('{count} running', { count: status.running_browsers })}) · {status.total_groups}
+                  </span>
+                </Row>
+                <Row label={t('System resources')}>
+                  <span className="font-mono text-ink-dim">
+                    {t('CPU {value}', { value: `${Math.round(status.cpu_percent ?? 0)}%` })} · {status.memory_used_mb != null ? `${(status.memory_used_mb / 1024).toFixed(1)} GB` : `${Math.round(status.memory_percent ?? status.memory_usage ?? 0)}%`}
+                  </span>
+                </Row>
+              </>
+            )}
           </Group>
-
-          {status && (
-            <Group title={t('Usage')}>
-              <Row label={t('Profiles')}>
-                <span className="font-mono">{status.total_profiles}</span>
-              </Row>
-              <Row label={t('Groups')}>
-                <span className="font-mono">{status.total_groups}</span>
-              </Row>
-              <Row label={t('Running browsers')}>
-                <span className="font-mono">{status.running_browsers}</span>
-              </Row>
-              <Row label={t('Memory / disk')}>
-                <span className="font-mono text-ink-dim">
-                  {Math.round(status.memory_usage)}% / {Math.round(status.disk_usage)}%
-                </span>
-              </Row>
-            </Group>
-          )}
         </div>
       )}
-    </>
+    </div>
   )
 }
 
-function Group({
-  title,
-  note,
-  children,
-}: {
-  title: string
-  note?: string
-  children: React.ReactNode
-}) {
+function Group({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint">
-        {title}
-      </h2>
-      {note && <p className="mb-2 text-ink-faint">{note}</p>}
+      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">{title}</h2>
+      {note && <p className="mb-2 text-[12px] text-ink-dim">{note}</p>}
       <div className="panel divide-y divide-line">{children}</div>
     </section>
   )
@@ -196,7 +173,7 @@ function Group({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-4 px-4 py-2.5">
-      <span className="w-[150px] shrink-0 text-ink-dim">{label}</span>
+      <span className="w-[156px] shrink-0 text-ink-dim">{label}</span>
       <span className="flex-1">{children}</span>
     </div>
   )
@@ -218,7 +195,7 @@ function Toggle({
   const warn = !on && warnWhenOff
   return (
     <div className="flex gap-4 px-4 py-2.5">
-      <span className="w-[150px] shrink-0 text-ink-dim">{label}</span>
+      <span className="w-[156px] shrink-0 text-ink-dim">{label}</span>
       <span className="flex flex-1 items-start gap-2">
         {on ? (
           <Check size={14} className="mt-0.5 shrink-0 text-ok" />

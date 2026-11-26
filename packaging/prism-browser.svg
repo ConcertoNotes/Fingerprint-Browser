@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <!-- Soft optical blur filters for genuine Apple-grade luminescence -->
+    <filter id="beamBlur" x="-30%" y="-40%" width="160%" height="180%">
+      <feGaussianBlur stdDeviation="3.4"/>
+    </filter>
+    <filter id="softBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4.8"/>
+    </filter>
+    <filter id="sparkBlur" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.6"/>
+    </filter>
+
+    <!-- Deep midnight indigo to obsidian violet squircle base -->
+    <linearGradient id="bg" x1="14" y1="4" x2="114" y2="126" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0A0F24"/>
+      <stop offset="48%" stop-color="#171642"/>
+      <stop offset="100%" stop-color="#2A1D66"/>
+    </linearGradient>
+
+    <!-- Top-left atmospheric aurora glow -->
+    <radialGradient id="auroraTop" cx="38" cy="20" r="78" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.42"/>
+      <stop offset="52%" stop-color="#4338CA" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#0A0F24" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Spectral ambient bloom on right -->
+    <radialGradient id="auroraRight" cx="102" cy="64" r="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.24"/>
+      <stop offset="48%" stop-color="#8B5CF6" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#0A0F24" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Delicate 1px specular squircle rim -->
+    <linearGradient id="rim" x1="64" y1="0" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="30%" stop-color="#C7D2FE" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <!-- Incoming luminous white ray -->
+    <linearGradient id="beamIn" x1="4" y1="73.5" x2="43.5" y2="61" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#E0E7FF" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="1"/>
+    </linearGradient>
+
+    <!-- Internal refracted spectral fan -->
+    <linearGradient id="refractFan" x1="43" y1="61" x2="84" y2="63" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.82"/>
+      <stop offset="45%" stop-color="#BAE6FD" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#C4B5FD" stop-opacity="0.20"/>
+    </linearGradient>
+
+    <!-- 3 dispersed luminous spectral beams -->
+    <linearGradient id="beamCyan" x1="75" y1="53.7" x2="124" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E0F2FE" stop-opacity="1"/>
+      <stop offset="28%" stop-color="#38BDF8" stop-opacity="0.95"/>
+      <stop offset="75%" stop-color="#0EA5E9" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#0284C7" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamViolet" x1="79" y1="62.4" x2="125" y2="62.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F5F3FF" stop-opacity="1"/>
+      <stop offset="30%" stop-color="#818CF8" stop-opacity="0.94"/>
+      <stop offset="75%" stop-color="#A855F7" stop-opacity="0.44"/>
+      <stop offset="100%" stop-color="#9333EA" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamAmber" x1="83" y1="71.2" x2="124" y2="89" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FEF3C7" stop-opacity="1"/>
+      <stop offset="30%" stop-color="#FB923C" stop-opacity="0.94"/>
+      <stop offset="75%" stop-color="#FB7185" stop-opacity="0.44"/>
+      <stop offset="100%" stop-color="#E11D48" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Translucent 3D faceted crystal glass gradients -->
+    <linearGradient id="facetLeft" x1="34" y1="26" x2="61" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.40"/>
+      <stop offset="48%" stop-color="#E0E7FF" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#818CF8" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="facetRight" x1="61" y1="24" x2="94" y2="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#C7D2FE" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#6366F1" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="facetBottom" x1="27" y1="96" x2="95" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="50%" stop-color="#A5B4FC" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.12"/>
+    </linearGradient>
+
+    <!-- Crisp luminous glass rim -->
+    <linearGradient id="prismEdge" x1="30" y1="22" x2="94" y2="97" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.96"/>
+      <stop offset="42%" stop-color="#E0E7FF" stop-opacity="0.68"/>
+      <stop offset="78%" stop-color="#93C5FD" stop-opacity="0.56"/>
+      <stop offset="100%" stop-color="#7DD3FC" stop-opacity="0.62"/>
+    </linearGradient>
+
+    <!-- Soft floating base reflection -->
+    <linearGradient id="baseGlow" x1="26" y1="103" x2="98" y2="103" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0"/>
+      <stop offset="28%" stop-color="#38BDF8" stop-opacity="0.55"/>
+      <stop offset="52%" stop-color="#A5B4FC" stop-opacity="0.60"/>
+      <stop offset="76%" stop-color="#FB923C" stop-opacity="0.48"/>
+      <stop offset="100%" stop-color="#F43F5E" stop-opacity="0"/>
+    </linearGradient>
+
+    <clipPath id="prismClip">
+      <path d="M61 23 L95 96 L27 96 Z"/>
+    </clipPath>
+    <clipPath id="squircleClip">
+      <rect width="128" height="128" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircleClip)">
+    <!-- Squircle Backdrop -->
+    <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+    <rect width="128" height="128" rx="28" fill="url(#auroraTop)"/>
+    <rect width="128" height="128" rx="28" fill="url(#auroraRight)"/>
+
+    <!-- Silky blurred ambient shadow/reflection beneath prism -->
+    <ellipse cx="62" cy="103.5" rx="33" ry="3.2" fill="url(#baseGlow)" filter="url(#softBlur)" opacity="0.72"/>
+
+    <!-- Soft luminous optical halos behind beams -->
+    <g filter="url(#beamBlur)" opacity="0.68">
+      <line x1="6" y1="73" x2="43.5" y2="61" stroke="url(#beamIn)" stroke-width="5.5" stroke-linecap="round"/>
+      <polygon points="75.3,52.2 124,31.5 124,41.5 75.3,55.2" fill="url(#beamCyan)"/>
+      <polygon points="79.4,60.8 125,58.2 125,66.6 79.4,64.0" fill="url(#beamViolet)"/>
+      <polygon points="83.4,69.6 124,84.5 124,94.5 83.4,72.8" fill="url(#beamAmber)"/>
+    </g>
+
+    <!-- Crisp incoming white beam striking exact left prism edge (43.3, 61.0) -->
+    <polygon points="4,72.2 43.5,59.7 43.5,62.3 4,74.8" fill="url(#beamIn)"/>
+
+    <!-- Crisp dispersed spectral ribbons emerging from exact right prism edge -->
+    <polygon points="75.0,52.4 124,33.5 124,39.2 75.6,55.0" fill="url(#beamCyan)"/>
+    <polygon points="79.2,61.0 125,59.8 125,65.0 79.6,63.8" fill="url(#beamViolet)"/>
+    <polygon points="83.1,69.8 124,86.2 124,91.8 83.7,72.6" fill="url(#beamAmber)"/>
+
+    <!-- Internal refracted light dispersion strictly clipped inside prism -->
+    <g clip-path="url(#prismClip)">
+      <polygon points="43.3,59.8 75.5,52.2 83.8,72.6 43.3,62.2" fill="url(#refractFan)"/>
+      <line x1="43.3" y1="60.6" x2="75.5" y2="53.7" stroke="#E0F2FE" stroke-width="2" opacity="0.72"/>
+      <line x1="43.3" y1="61.0" x2="79.6" y2="62.4" stroke="#EDE9FE" stroke-width="2" opacity="0.68"/>
+      <line x1="43.3" y1="61.4" x2="83.6" y2="71.2" stroke="#FEF3C7" stroke-width="2" opacity="0.62"/>
+    </g>
+
+    <!-- 3D Faceted Translucent Glass Prism -->
+    <polygon points="61,23 27,96 61,74" fill="url(#facetLeft)"/>
+    <polygon points="61,23 61,74 95,96" fill="url(#facetRight)"/>
+    <polygon points="27,96 61,74 95,96" fill="url(#facetBottom)"/>
+
+    <!-- Subtle internal crystal facet ridges -->
+    <line x1="61" y1="24" x2="61" y2="74" stroke="#FFFFFF" stroke-width="1.15" stroke-opacity="0.38"/>
+    <line x1="61" y1="74" x2="28" y2="95.4" stroke="#FFFFFF" stroke-width="1.05" stroke-opacity="0.24"/>
+    <line x1="61" y1="74" x2="94" y2="95.4" stroke="#C7D2FE" stroke-width="1.05" stroke-opacity="0.22"/>
+
+    <!-- Crisp luminous glass triangle perimeter -->
+    <path d="M61 23 L95 96 L27 96 Z" fill="none" stroke="url(#prismEdge)" stroke-width="2.1" stroke-linejoin="round"/>
+
+    <!-- Soft optical entry point flare on left prism edge -->
+    <circle cx="43.5" cy="61" r="4.8" fill="#FFFFFF" filter="url(#sparkBlur)" opacity="0.92"/>
+    <circle cx="43.5" cy="61" r="1.8" fill="#FFFFFF" opacity="0.98"/>
+
+    <!-- Delicate 1px translucent specular inner rim -->
+    <rect x="0.75" y="0.75" width="126.5" height="126.5" rx="27.3" fill="none" stroke="url(#rim)" stroke-width="1.1"/>
+  </g>
+</svg>

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { useI18n } from '@/components/i18n-provider'
+import { acquireViewportOverlay } from '@/lib/desktop-bridge'
 
 interface ModalProps {
   open: boolean
@@ -12,21 +13,29 @@ interface ModalProps {
   children: React.ReactNode
   footer?: React.ReactNode
   width?: number
+  bodyClassName?: string
+  panelClassName?: string
 }
 
 /**
- * Dialog shell. Closes on Escape and on backdrop click, moves focus inside on
- * open, and locks background scroll — the old modal did none of these.
+ * Dialog shell with focus trap, Escape dismissal, backdrop click, specular glass rim,
+ * and pinned header/footer so content scrolls smoothly inside the sheet.
  */
-export function Modal({ open, title, subtitle, onClose, children, footer, width = 620 }: ModalProps) {
+export function Modal({
+  open,
+  title,
+  subtitle,
+  onClose,
+  children,
+  footer,
+  width = 620,
+  bodyClassName,
+  panelClassName,
+}: ModalProps) {
   const { t } = useI18n()
   const panelRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
 
-  // Callers commonly pass an inline callback. Keep the current callback in a
-  // ref so parent rerenders do not tear down and recreate the focus trap.
-  // Re-running that effect restores its initially focused element, which made
-  // polling pages repeatedly steal focus back to an auto-focused input.
   useEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
@@ -49,16 +58,12 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
         onCloseRef.current()
         return
       }
-      // aria-modal alone does not stop Tab walking into the page behind the
-      // overlay, so the cycle is kept inside the dialog by hand.
       if (event.key !== 'Tab') return
       const items = focusable()
       if (items.length === 0) return
       const first = items[0]
       const last = items[items.length - 1]
       const active = document.activeElement
-      // A step transition can remove its focused button. Keep the next Tab
-      // inside this dialog even when the browser returns focus to the body.
       if (!panel?.contains(active)) {
         event.preventDefault()
         const target = event.shiftKey ? last : first
@@ -77,13 +82,12 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
 
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    // React autoFocus runs before this effect and loses the opener's identity.
-    // Capture the opener above, then focus the marked control without remounting
-    // it when translations change. Other dialogs fall back to the panel.
+    const releaseOverlay = acquireViewportOverlay()
     const initialFocus = panel?.querySelector<HTMLElement>('[data-modal-autofocus]:not([disabled])')
     if (!panel?.contains(document.activeElement)) (initialFocus ?? panel)?.focus()
 
     return () => {
+      releaseOverlay()
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
       previouslyFocused?.focus?.()
@@ -94,15 +98,11 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
 
   return (
     <div
-      className="overlay-in fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-6 backdrop-blur-[2px]"
+      className="overlay-in modal-scrim fixed inset-0 z-40 flex items-center justify-center p-5 backdrop-blur-[6px]"
       onMouseDown={(event) => {
-        // Only a click that starts on the backdrop closes; a drag out of a text
-        // field must not dismiss the dialog.
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      {/* Header and footer stay pinned; only the body scrolls, so a tall form
-          can never push its own title or its Save button out of reach. */}
       <div
         ref={panelRef}
         tabIndex={-1}
@@ -110,22 +110,28 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
         aria-modal="true"
         aria-label={title}
         style={{ width }}
-        className="dialog-in flex max-h-full max-w-full flex-col rounded-lg border border-line bg-surface shadow-2xl shadow-black/60 outline-none"
+        className={`dialog-in modal-sheet relative flex max-h-full max-w-full flex-col overflow-hidden rounded-2xl bg-surface outline-none ${panelClassName ?? ''}`}
       >
+        <div className="prism-hairline h-[1.5px] w-full shrink-0 opacity-75" aria-hidden="true" />
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-3.5">
-          <div>
-            <h2 className="text-[14px] font-semibold">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-ink-dim">{subtitle}</p>}
+          <div className="min-w-0">
+            <h2 className="text-[14.5px] font-semibold tracking-tight text-ink">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[12px] text-ink-dim">{subtitle}</p>}
           </div>
-          <button onClick={onClose} aria-label={t('Close')} className="btn btn-ghost -mr-2 h-7 w-7 p-0">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('Close')}
+            className="btn btn-ghost -mr-2 h-7 w-7 p-0"
+          >
             <X size={15} strokeWidth={2} />
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className={bodyClassName ?? 'min-h-0 flex-1 overflow-y-auto px-5 py-4'}>{children}</div>
 
         {footer && (
-          <footer className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3">
+          <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-sidebar/75 px-5 py-3">
             {footer}
           </footer>
         )}
@@ -163,10 +169,11 @@ export function ConfirmDialog({
       width={420}
       footer={
         <>
-          <button className="btn btn-default" onClick={onCancel}>
+          <button type="button" className="btn btn-default" onClick={onCancel}>
             {t('Cancel')}
           </button>
           <button
+            type="button"
             className={destructive ? 'btn btn-danger' : 'btn btn-primary'}
             onClick={onConfirm}
             data-modal-autofocus
@@ -176,7 +183,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-ink-dim">{body}</p>
+      <p className="leading-relaxed text-ink-dim">{body}</p>
     </Modal>
   )
 }

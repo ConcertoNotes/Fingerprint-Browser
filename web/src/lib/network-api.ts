@@ -1,4 +1,4 @@
-import { apiRequest } from './api'
+import { apiRequest, emitStatusRefresh, type RiskDomainProbeReport } from './api'
 
 // Client for /api/v1/network: subscriptions, nodes, measured exits, bindings.
 // Node secrets never reach the browser; these types describe public metadata only.
@@ -83,15 +83,21 @@ export interface NetworkNode {
   id: string
   subscription_id: string
   subscription_name: string
+  subscription_managed_by?: 'local' | 'cloud'
   name: string
   protocol: string
-  entry: string
+  entry?: string | null
+  credentials_protected?: boolean
+  editable?: boolean
+  deletable?: boolean
   status: NodeStatus
   invalid_reason: string | null
   created_at: string
   updated_at: string
   retired_at: string | null
   profile_count: number
+  bound_count?: number
+  bound_profile_ids?: string[]
   shared_exit_count: number
   check: NodeCheck | null
   intel: IpIntel | null
@@ -109,6 +115,9 @@ export interface Subscription {
   id: string
   name: string
   source_kind: 'url' | 'file' | 'manual'
+  managed_by?: 'local' | 'cloud'
+  cloud_source_id?: string | null
+  readonly?: boolean
   /** A group of fixed nodes added by hand; it has no source to refresh. */
   manual: boolean
   source_display: string | null
@@ -140,6 +149,7 @@ export interface MapFeatureProperties {
   label: string
   subscription_id: string
   subscription_name: string
+  subscription_managed_by?: 'local' | 'cloud'
   protocol: string
   status: NodeStatus
   country_iso: string | null
@@ -154,6 +164,8 @@ export interface MapFeatureProperties {
   checked_at: string
   stale: boolean
   profile_count: number
+  bound_count?: number
+  bound_profile_ids?: string[]
   shared_exit_count: number
   purity_score: number | null
   risk_score: number | null
@@ -169,7 +181,15 @@ export interface MapFeature {
 
 export interface NetworkMap {
   features: { type: 'FeatureCollection'; features: MapFeature[] }
-  unknown_location: { node_id: string; subscription_id: string; label: string; status: NodeStatus; health: Health; country_iso: string | null; exit_ip: string | null }[]
+  unknown_location: {
+    node_id: string
+    subscription_id: string
+    label: string
+    status: NodeStatus
+    health: Health
+    country_iso: string | null
+    exit_ip: string | null
+  }[]
   unknown_location_count: number
   checked_count: number
   total_nodes: number
@@ -226,8 +246,8 @@ export interface NetworkSettings {
 }
 
 export interface NetworkStatus {
-  engine: { available: boolean; path?: string; version?: string; code?: string; message?: string }
-  geoip: { available: boolean; name?: string; size?: number; modified_at?: number }
+  engine: { available: boolean; bundled?: boolean; path?: string; version?: string; code?: string; message?: string }
+  geoip: { available: boolean; bundled?: boolean; label?: string; name?: string; size?: number; modified_at?: number }
   encryption_available: boolean
   settings: NetworkSettings
   active_runtimes: number
@@ -263,10 +283,60 @@ function json(method: string, body?: unknown): RequestInit {
   return { method, body: body === undefined ? undefined : JSON.stringify(body) }
 }
 
+export function isCloudProtectedNode(
+  node: Pick<NetworkNode, 'subscription_id' | 'subscription_managed_by' | 'credentials_protected'>,
+  subscription?: Pick<Subscription, 'managed_by'> | null,
+): boolean {
+  return (
+    node.subscription_managed_by === 'cloud' ||
+    Boolean(node.credentials_protected) ||
+    subscription?.managed_by === 'cloud'
+  )
+}
+
+export function isProtectedNodeProtocol(
+  item: {
+    protocol?: string | null
+    subscription_managed_by?: 'local' | 'cloud'
+    credentials_protected?: boolean
+  },
+  subscription?: Pick<Subscription, 'managed_by'> | null,
+): boolean {
+  return (
+    item.protocol === 'protected' ||
+    item.subscription_managed_by === 'cloud' ||
+    Boolean(item.credentials_protected) ||
+    subscription?.managed_by === 'cloud'
+  )
+}
+
+export function nodeProtocolLabel(
+  item: {
+    protocol?: string | null
+    subscription_managed_by?: 'local' | 'cloud'
+    credentials_protected?: boolean
+  },
+  t: (message: string) => string,
+  subscription?: Pick<Subscription, 'managed_by'> | null,
+): string {
+  if (isProtectedNodeProtocol(item, subscription)) {
+    return t('Encrypted cloud tunnel')
+  }
+  return item.protocol ?? ''
+}
+
+export function filterLocalStaticGroups(subscriptions: Subscription[]): Subscription[] {
+  return subscriptions.filter(s => s.manual && s.managed_by !== 'cloud')
+}
+
 export const networkAPI = {
   status: () => data<NetworkStatus>('/status'),
   settings: () => data<NetworkSettings>('/settings'),
-  updateSettings: (changes: Partial<Record<string, unknown>>) => data<NetworkSettings>('/settings', json('PATCH', changes)),
+  updateSettings: async (changes: Partial<Record<string, unknown>>) => {
+    const res = await data<NetworkSettings>('/settings', json('PATCH', changes))
+    emitStatusRefresh()
+    return res
+  },
 
   subscriptions: async () => (await data<{ subscriptions: Subscription[] }>('/subscriptions')).subscriptions,
   createFromUrl: (url: string, name?: string) =>
@@ -289,6 +359,8 @@ export const networkAPI = {
   node: (id: string) => data<NetworkNode>(`/nodes/${id}`),
   checkNode: (id: string, options: { include_intel?: boolean; refresh_intel?: boolean } = {}) =>
     data<NetworkNode>(`/nodes/${id}/check`, json('POST', options)),
+  probeNodeDomains: (nodeId: string) =>
+    data<RiskDomainProbeReport>(`/nodes/${encodeURIComponent(nodeId)}/probe-domains`, json('POST', {})),
   checkBatch: (nodeIds: string[]) => data<BatchJob>('/nodes/check-batch', json('POST', { node_ids: nodeIds })),
   job: (id: string) => data<BatchJob>(`/jobs/${id}`),
   currentJob: async () => (await data<{ job: BatchJob | null }>('/jobs/current')).job,

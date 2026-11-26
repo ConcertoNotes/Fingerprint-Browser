@@ -1,45 +1,157 @@
 @import "tailwindcss";
 
 /*
- * 噜噜指纹浏览器 — "instrument panel", light.
+ * 棱镜浏览器 (Prism Browser) — Obsidian Prism & Porcelain Graphite Design System.
  *
- * A dense control surface: paper-light canvas, hairline rules instead of boxes,
- * monospace for machine values, and a single signal colour (orange) reserved
- * for the primary action and the running state. Everything else is greyscale so
- * a running browser is the only thing that draws the eye. Status colours are
- * darkened from their usual hues so text keeps at least 4.5:1 on white.
- *
- * Fonts are bundled from pinned Fontsource packages (see fonts.css) for offline use.
+ * Dual-theme architecture (Obsidian Dark default + Porcelain Light 1-click toggle).
+ * Layered matte surfaces, 1px specular glass rims, restrained prism spectral accents,
+ * and crisp tabular typography engineered for long-session desktop precision.
  */
 
-@theme {
-  --color-canvas: #f6f7f9;
-  --color-surface: #ffffff;
-  --color-raised: #eef0f3;
-  --color-line: #e1e4e9;
-  --color-line-strong: #c8cdd5;
+:root,
+[data-theme="dark"] {
+  --prism-sidebar: #0c0e14;
+  --prism-canvas: #090b10;
+  --prism-surface: #12151e;
+  --prism-raised: #1a1f2c;
+  --prism-line: rgba(255, 255, 255, 0.08);
+  --prism-line-strong: rgba(255, 255, 255, 0.16);
 
-  --color-ink: #1b1f24;
-  --color-ink-dim: #535c67;
-  --color-ink-faint: #6b7380;
+  --prism-ink: #f1f4fa;
+  --prism-ink-dim: #95a2ba;
+  --prism-ink-faint: #647089;
 
-  --color-signal: #c2410c;
-  --color-signal-soft: #9a3412;
-  --color-signal-shade: #ffedd5;
+  --prism-signal: #7c7bff;
+  --prism-signal-soft: #6a68f5;
+  --prism-signal-shade: rgba(124, 123, 255, 0.14);
 
-  --color-danger: #c62828;
-  --color-danger-shade: #fdecea;
-  /* Detectable-but-not-fatal. Distinct from --color-signal, which means "this is
-     the primary action" or "this profile is running" and nothing else. */
-  --color-warn: #8a5a00;
-  --color-ok: #1a7f37;
+  --prism-ok: #34d399;
+  --prism-ok-dot: #10b981;
+  --prism-ok-shade: rgba(16, 185, 129, 0.13);
 
-  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --prism-warn: #fbbf24;
+  --prism-warn-dot: #f59e0b;
+  --prism-warn-shade: rgba(245, 158, 11, 0.14);
+
+  --prism-danger: #f87171;
+  --prism-danger-dot: #ef4444;
+  --prism-danger-shade: rgba(239, 68, 68, 0.14);
+
+  --prism-specular: rgba(255, 255, 255, 0.055);
+  --prism-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.045) inset, 0 10px 28px -14px rgba(0, 0, 0, 0.65);
+  --prism-card-hover-shadow: 0 1px 0 rgba(255, 255, 255, 0.075) inset, 0 16px 36px -14px rgba(0, 0, 0, 0.78);
+  --prism-modal-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 32px 90px -20px rgba(0, 0, 0, 0.85);
+  --prism-scrim: rgba(4, 6, 12, 0.68);
+
+  --prism-field-bg: rgba(9, 11, 16, 0.72);
+  --prism-field-border: rgba(255, 255, 255, 0.095);
+  --prism-field-hover-border: rgba(255, 255, 255, 0.19);
+  --prism-field-focus-ring: rgba(124, 123, 255, 0.22);
+
+  --prism-btn-primary-bg: linear-gradient(180deg, #8281ff 0%, #5e5ce6 100%);
+  --prism-btn-primary-hover: linear-gradient(180deg, #8e8dff 0%, #6866f0 100%);
+  --prism-btn-primary-shadow: 0 1px 0 rgba(255, 255, 255, 0.24) inset, 0 4px 14px -4px rgba(108, 106, 245, 0.6);
+  --prism-btn-primary-hover-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset, 0 6px 20px -4px rgba(124, 123, 255, 0.72);
+
+  --prism-btn-default-bg: rgba(255, 255, 255, 0.035);
+  --prism-btn-default-hover: rgba(255, 255, 255, 0.075);
+  --prism-btn-default-border: rgba(255, 255, 255, 0.1);
+  --prism-btn-default-hover-border: rgba(255, 255, 255, 0.19);
+
+  --prism-scroll-thumb: rgba(148, 163, 184, 0.2);
+  --prism-scroll-thumb-hover: rgba(148, 163, 184, 0.38);
+  --prism-select-arrow: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2395a2ba' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="light"] {
+  --prism-sidebar: #f2f4f7;
+  --prism-canvas: #f7f8fa;
+  --prism-surface: #ffffff;
+  --prism-raised: #eaeef4;
+  --prism-line: rgba(15, 23, 42, 0.085);
+  --prism-line-strong: rgba(15, 23, 42, 0.17);
+
+  --prism-ink: #0d1220;
+  --prism-ink-dim: #4a5568;
+  --prism-ink-faint: #76829a;
+
+  --prism-signal: #4f46e5;
+  --prism-signal-soft: #4338ca;
+  --prism-signal-shade: rgba(79, 70, 229, 0.09);
+
+  --prism-ok: #059669;
+  --prism-ok-dot: #10b981;
+  --prism-ok-shade: rgba(16, 185, 129, 0.1);
+
+  --prism-warn: #b45309;
+  --prism-warn-dot: #f59e0b;
+  --prism-warn-shade: rgba(245, 158, 11, 0.12);
+
+  --prism-danger: #dc2626;
+  --prism-danger-dot: #ef4444;
+  --prism-danger-shade: rgba(239, 68, 68, 0.1);
+
+  --prism-specular: rgba(255, 255, 255, 0.9);
+  --prism-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.95) inset, 0 1px 3px rgba(15, 23, 42, 0.04), 0 6px 18px -10px rgba(15, 23, 42, 0.08);
+  --prism-card-hover-shadow: 0 1px 0 rgba(255, 255, 255, 1) inset, 0 2px 6px rgba(15, 23, 42, 0.06), 0 14px 30px -12px rgba(15, 23, 42, 0.14);
+  --prism-modal-shadow: 0 24px 68px -16px rgba(15, 23, 42, 0.24), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --prism-scrim: rgba(15, 23, 42, 0.34);
+
+  --prism-field-bg: #ffffff;
+  --prism-field-border: rgba(15, 23, 42, 0.12);
+  --prism-field-hover-border: rgba(15, 23, 42, 0.22);
+  --prism-field-focus-ring: rgba(79, 70, 229, 0.14);
+
+  --prism-btn-primary-bg: linear-gradient(180deg, #5850ec 0%, #4338ca 100%);
+  --prism-btn-primary-hover: linear-gradient(180deg, #4f46e5 0%, #3730a3 100%);
+  --prism-btn-primary-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 2px 8px -2px rgba(79, 70, 229, 0.42);
+  --prism-btn-primary-hover-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 5px 14px -2px rgba(79, 70, 229, 0.5);
+
+  --prism-btn-default-bg: #ffffff;
+  --prism-btn-default-hover: #f4f6fa;
+  --prism-btn-default-border: rgba(15, 23, 42, 0.12);
+  --prism-btn-default-hover-border: rgba(15, 23, 42, 0.22);
+
+  --prism-scroll-thumb: rgba(15, 23, 42, 0.15);
+  --prism-scroll-thumb-hover: rgba(15, 23, 42, 0.3);
+  --prism-select-arrow: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+@theme inline {
+  --color-sidebar: var(--prism-sidebar);
+  --color-canvas: var(--prism-canvas);
+  --color-surface: var(--prism-surface);
+  --color-raised: var(--prism-raised);
+  --color-line: var(--prism-line);
+  --color-line-strong: var(--prism-line-strong);
+
+  --color-ink: var(--prism-ink);
+  --color-ink-dim: var(--prism-ink-dim);
+  --color-ink-faint: var(--prism-ink-faint);
+
+  --color-signal: var(--prism-signal);
+  --color-signal-soft: var(--prism-signal-soft);
+  --color-signal-shade: var(--prism-signal-shade);
+
+  --color-ok: var(--prism-ok);
+  --color-ok-dot: var(--prism-ok-dot);
+  --color-ok-shade: var(--prism-ok-shade);
+
+  --color-warn: var(--prism-warn);
+  --color-warn-dot: var(--prism-warn-dot);
+  --color-warn-shade: var(--prism-warn-shade);
+
+  --color-danger: var(--prism-danger);
+  --color-danger-dot: var(--prism-danger-dot);
+  --color-danger-shade: var(--prism-danger-shade);
+
+  --font-sans: var(--font-plex-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
 }
 
 @layer base {
@@ -53,38 +165,39 @@
     height: 100%;
   }
 
-  /* Native controls, scrollbars and form popups follow the light palette. */
   html {
+    color-scheme: dark;
+  }
+
+  html[data-theme="light"] {
     color-scheme: light;
   }
 
   body {
-    background-color: var(--color-canvas);
-    color: var(--color-ink);
+    background-color: var(--prism-canvas);
+    color: var(--prism-ink);
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Tabular figures keep dense numeric columns from shifting. */
     font-variant-numeric: tabular-nums;
   }
 
-  /* One focus treatment everywhere, keyboard-only. */
   :focus-visible {
-    outline: 2px solid var(--color-signal);
+    outline: 2px solid var(--prism-signal);
     outline-offset: 1px;
-    border-radius: 3px;
+    border-radius: 6px;
   }
 
   ::selection {
-    background: var(--color-signal-shade);
-    color: var(--color-ink);
+    background: var(--prism-signal-shade);
+    color: var(--prism-ink);
   }
 
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 7px;
+    height: 7px;
   }
 
   ::-webkit-scrollbar-track {
@@ -92,13 +205,16 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--color-line-strong);
-    border: 3px solid var(--color-canvas);
+    background: var(--prism-scroll-thumb);
+    border: 2px solid transparent;
+    background-clip: content-box;
     border-radius: 999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-ink-faint);
+    background: var(--prism-scroll-thumb-hover);
+    border: 2px solid transparent;
+    background-clip: content-box;
   }
 
   input,
@@ -107,63 +223,85 @@
   button {
     font: inherit;
     color: inherit;
-    /* Preflight forces text-transform: none on buttons, which breaks uppercase
-       inherited from a container (e.g. sortable table headers). */
     text-transform: inherit;
     letter-spacing: inherit;
   }
 
   input::placeholder,
   textarea::placeholder {
-    color: var(--color-ink-faint);
+    color: var(--prism-ink-faint);
+  }
+
+  select option,
+  select optgroup {
+    background-color: var(--prism-surface);
+    color: var(--prism-ink);
   }
 }
 
 @layer components {
+  /* --- Desktop Frameless Drag Regions ----------------------------------- */
+
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   /* --- Form controls ---------------------------------------------------- */
 
   .field {
     width: 100%;
-    background: var(--color-canvas);
-    border: 1px solid var(--color-line);
+    background: var(--prism-field-bg);
+    border: 1px solid var(--prism-field-border);
     border-radius: var(--radius-md);
-    padding: 7px 10px;
-    color: var(--color-ink);
+    padding: 7px 11px;
+    color: var(--prism-ink);
     transition:
-      border-color 0.12s ease,
-      background 0.12s ease;
+      border-color 0.14s ease,
+      box-shadow 0.14s ease,
+      background-color 0.14s ease;
   }
 
   .field:hover:not(:disabled) {
-    border-color: var(--color-line-strong);
+    border-color: var(--prism-field-hover-border);
   }
 
   .field:focus {
     outline: none;
-    border-color: var(--color-signal);
-    background: var(--color-surface);
+    border-color: var(--prism-signal);
+    box-shadow: 0 0 0 3px var(--prism-field-focus-ring);
+    background: var(--prism-surface);
   }
 
   .field:disabled {
-    opacity: 0.5;
+    opacity: 0.48;
+    background: var(--prism-raised);
   }
 
   select.field {
+    -webkit-appearance: none;
+    -moz-appearance: none;
     appearance: none;
-    /* Chevron drawn inline so no network request is needed. */
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239195a0' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    align-items: center;
+    background-image: var(--prism-select-arrow);
     background-repeat: no-repeat;
     background-position: right 9px center;
     padding-right: 28px;
+  }
+
+  select.field::picker-icon {
+    display: none;
   }
 
   .field-label {
     display: block;
     font-size: 11px;
     font-weight: 500;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--color-ink-faint);
+    letter-spacing: 0.03em;
+    color: var(--prism-ink-dim);
     margin-bottom: 5px;
   }
 
@@ -174,83 +312,184 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    height: 30px;
-    padding: 0 11px;
+    height: 32px;
+    padding: 0 12px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
     transition:
-      background 0.12s ease,
-      border-color 0.12s ease,
-      color 0.12s ease;
+      background 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.1s ease;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: scale(0.985);
   }
 
   .btn:disabled {
-    opacity: 0.45;
+    opacity: 0.42;
     cursor: not-allowed;
   }
 
-  /* The only saturated element on the page. */
   .btn-primary {
-    background: var(--color-signal);
+    background: var(--prism-btn-primary-bg);
+    border-color: rgba(255, 255, 255, 0.12);
     color: #ffffff;
-    font-weight: 600;
+    font-weight: 500;
+    box-shadow: var(--prism-btn-primary-shadow);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--color-signal-soft);
+    background: var(--prism-btn-primary-hover);
+    box-shadow: var(--prism-btn-primary-hover-shadow);
   }
 
   .btn-default {
-    background: var(--color-raised);
-    border-color: var(--color-line);
-    color: var(--color-ink);
+    background: var(--prism-btn-default-bg);
+    border-color: var(--prism-btn-default-border);
+    color: var(--prism-ink);
+    box-shadow: 0 1px 0 var(--prism-specular) inset;
   }
 
   .btn-default:hover:not(:disabled) {
-    background: var(--color-line);
-    border-color: var(--color-line-strong);
+    background: var(--prism-btn-default-hover);
+    border-color: var(--prism-btn-default-hover-border);
   }
 
   .btn-ghost {
     background: transparent;
-    color: var(--color-ink-dim);
+    color: var(--prism-ink-dim);
   }
 
   .btn-ghost:hover:not(:disabled) {
-    background: var(--color-raised);
-    color: var(--color-ink);
+    background: var(--prism-raised);
+    color: var(--prism-ink);
   }
 
   .btn-danger {
-    background: transparent;
-    border-color: var(--color-line);
-    color: var(--color-danger);
+    background: var(--prism-btn-default-bg);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: var(--prism-danger);
   }
 
   .btn-danger:hover:not(:disabled) {
-    background: var(--color-danger-shade);
-    border-color: var(--color-danger);
+    background: var(--prism-danger-shade);
+    border-color: rgba(239, 68, 68, 0.5);
   }
 
-  /* --- Surfaces --------------------------------------------------------- */
+  /* --- Surfaces, Elevation & Prism Accents ------------------------------ */
 
   .panel {
-    background: var(--color-surface);
-    border: 1px solid var(--color-line);
+    background: var(--prism-surface);
+    border: 1px solid var(--prism-line);
     border-radius: var(--radius-lg);
+    box-shadow: var(--prism-card-shadow);
+  }
+
+  .panel-interactive {
+    background: var(--prism-surface);
+    border: 1px solid var(--prism-line);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--prism-card-shadow);
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.2s ease,
+      transform 0.18s ease,
+      background-color 0.18s ease;
+  }
+
+  .panel-interactive:hover {
+    border-color: var(--prism-line-strong);
+    box-shadow: var(--prism-card-hover-shadow);
+  }
+
+  .modal-scrim {
+    background: var(--prism-scrim);
+  }
+
+  .modal-sheet {
+    background: var(--prism-surface);
+    border: 1px solid var(--prism-line-strong);
+    box-shadow: var(--prism-modal-shadow);
+  }
+
+  .prism-hairline {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(56, 189, 248, 0.65) 26%,
+      rgba(129, 140, 248, 0.9) 52%,
+      rgba(251, 146, 60, 0.6) 76%,
+      transparent 100%
+    );
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 9999px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--prism-line);
+    background: var(--prism-raised);
+    color: var(--prism-ink-dim);
+  }
+
+  /* Soften neutral status dots (used by entitlementDotClass('none') & stopped profiles) in Obsidian Dark */
+  [data-theme="dark"] .bg-slate-300 {
+    background-color: rgba(148, 163, 184, 0.36);
+  }
+
+  /* --- MapLibre GL Theme Integration ------------------------------------ */
+
+  .maplibregl-ctrl-group {
+    background: var(--prism-surface) !important;
+    border: 1px solid var(--prism-line-strong) !important;
+    border-radius: 10px !important;
+    box-shadow: var(--prism-card-shadow) !important;
+    overflow: hidden;
+  }
+
+  .maplibregl-ctrl-group button + button {
+    border-top: 1px solid var(--prism-line) !important;
+  }
+
+  .maplibregl-ctrl-group button:hover {
+    background-color: var(--prism-raised) !important;
+  }
+
+  [data-theme="dark"] .maplibregl-ctrl-icon {
+    filter: invert(0.88) hue-rotate(180deg);
+  }
+
+  .maplibregl-ctrl-attrib.maplibregl-compact {
+    background-color: var(--prism-surface) !important;
+    color: var(--prism-ink-faint) !important;
+    border: 1px solid var(--prism-line) !important;
+  }
+
+  [data-theme="dark"] .maplibregl-ctrl-attrib-button {
+    filter: invert(0.82);
+  }
+
+  .maplibregl-ctrl-attrib a {
+    color: var(--prism-ink-dim) !important;
   }
 
   /* --- Motion ----------------------------------------------------------- */
 
-  /* Rows fade up in sequence so a long list reads as one movement. */
   @keyframes row-in {
     from {
       opacity: 0;
-      transform: translateY(3px);
+      transform: translateY(4px);
     }
     to {
       opacity: 1;
@@ -259,7 +498,7 @@
   }
 
   .row-in {
-    animation: row-in 0.22s ease-out backwards;
+    animation: row-in 0.2s ease-out backwards;
   }
 
   @keyframes overlay-in {
@@ -273,8 +512,8 @@
 
   @keyframes dialog-in {
     from {
-      opacity: 0;
-      transform: translateY(6px) scale(0.99);
+      opacity: 0.92;
+      transform: translateY(5px) scale(0.988);
     }
     to {
       opacity: 1;
@@ -287,31 +526,51 @@
   }
 
   .dialog-in {
-    animation: dialog-in 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+    animation: dialog-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* The running indicator — the one thing that moves on its own. */
   @keyframes signal-pulse {
     0%,
     100% {
       opacity: 1;
-      box-shadow: 0 0 0 0 rgb(194 65 12 / 0.45);
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.52);
     }
     50% {
-      opacity: 0.75;
-      box-shadow: 0 0 0 3px rgb(194 65 12 / 0);
+      opacity: 0.85;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0);
     }
   }
 
   .signal-pulse {
-    animation: signal-pulse 2s ease-in-out infinite;
+    animation: signal-pulse 2.2s ease-in-out infinite;
+  }
+
+  @keyframes map-pin-pulse {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 3px var(--prism-surface),
+        0 0 0 6px rgba(124, 123, 255, 0.42),
+        0 4px 14px rgba(124, 123, 255, 0.35);
+    }
+    50% {
+      box-shadow:
+        0 0 0 3px var(--prism-surface),
+        0 0 0 12px rgba(124, 123, 255, 0),
+        0 4px 14px rgba(124, 123, 255, 0.24);
+    }
+  }
+
+  .map-pin-pulse {
+    animation: map-pin-pulse 2s ease-in-out infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
     .row-in,
     .overlay-in,
     .dialog-in,
-    .signal-pulse {
+    .signal-pulse,
+    .map-pin-pulse {
       animation: none;
     }
   }

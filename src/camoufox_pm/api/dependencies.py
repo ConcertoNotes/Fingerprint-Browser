@@ -1,20 +1,16 @@
-"""API dependencies (dependency injection and auth guards)."""
+"""API dependencies (dependency injection and optional API-key guard)."""
 
 import hmac
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Header, HTTPException
 
-from camoufox_pm.api.access import request_principal, request_session_hash
-from camoufox_pm.api.principal import Principal
+from camoufox_pm.api.errors import ApiError
 from camoufox_pm.config import get_settings
-from camoufox_pm.core import auth
 from camoufox_pm.core.database import StorageManager
 from camoufox_pm.core.profile_manager import ProfileManager
-from camoufox_pm.core.scheduler import TaskScheduler
 
 _storage_manager: StorageManager | None = None
 _profile_manager: ProfileManager | None = None
-_scheduler: TaskScheduler | None = None
 
 
 def set_storage_manager(storage_manager: StorageManager) -> None:
@@ -48,21 +44,7 @@ def _api_key_matches(x_api_key: str | None) -> bool:
     configured = get_settings().api_key
     if not configured or x_api_key is None:
         return False
-    # Constant-time comparison to avoid leaking the key via response timing.
     return hmac.compare_digest(x_api_key, configured)
-
-
-def set_scheduler(scheduler: TaskScheduler) -> None:
-    """Register the shared ``TaskScheduler`` instance."""
-    global _scheduler
-    _scheduler = scheduler
-
-
-def get_scheduler() -> TaskScheduler:
-    """Return the shared ``TaskScheduler`` instance."""
-    if _scheduler is None:
-        raise HTTPException(status_code=500, detail="TaskScheduler is not initialized")
-    return _scheduler
 
 
 async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -73,53 +55,26 @@ async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-async def require_auth(request: Request, x_api_key: str | None = Header(default=None)) -> Principal:
-    """Authenticate a request and expose its credential-free principal.
+async def require_auth(x_api_key: str | None = Header(default=None)) -> None:
+    """Optional ``CPM_API_KEY`` protection; loopback desktop usage is open by default."""
+    await require_api_key(x_api_key)
 
-    The guard on every API route accepts a login session or the API key.
 
-    Three configurations, all decided per request so a user created by the CLI
-    while the server runs takes effect immediately:
+async def require_desktop_token(
+    x_prism_desktop_token: str | None = Header(default=None),
+) -> None:
+    """Protect credential-bearing session endpoints when ``CPM_DESKTOP_TOKEN`` is configured.
 
-    - no users, no ``CPM_API_KEY`` — open, exactly the pre-auth loopback default;
-    - ``CPM_API_KEY`` set — a matching ``X-API-Key`` always passes, so machine
-      clients are unaffected by user accounts existing or not;
-    - any user account exists — everything else needs a valid session cookie.
+    Electron's main process passes a per-launch random hex token in
+    ``X-Prism-Desktop-Token`` so neither renderer code nor guest views can read
+    loopback proxy credentials.
     """
-    if _api_key_matches(x_api_key):
-        principal = Principal("legacy_api_key")
-        request.state.principal = principal
-        request_principal.set(principal)
-        return principal
-    storage = get_storage_manager()
-    if await storage.count_users() == 0:
-        if not get_settings().api_key:
-            principal = Principal("anonymous_local")
-            request.state.principal = principal
-            request_principal.set(principal)
-            return principal
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    token = request.cookies.get(auth.SESSION_COOKIE)
-    recovery_control = request.url.path in {
-        f"{prefix}/system/update-recovery{suffix}"
-        for prefix in ("/api", "/api/v1")
-        for suffix in ("", "/cancel", "/apply", "/resume", "/rollback")
-    }
-    if token:
-        username = (
-            await auth.validate_session(storage, token, read_only=True)
-            if recovery_control
-            else await auth.validate_session(storage, token)
+    configured = get_settings().desktop_token
+    if not configured:
+        return
+    if x_prism_desktop_token is None or not hmac.compare_digest(x_prism_desktop_token, configured):
+        raise ApiError(
+            403,
+            "Invalid or missing desktop session token.",
+            "desktop_token_required",
         )
-        if username is not None:
-            user = await storage.get_user_by_username(username)
-            if user is None:
-                raise HTTPException(status_code=401, detail="Authentication required")
-            principal = Principal("session", username=username, role=user["role"])
-            request_session_hash.set(auth.hash_token(token))
-            request.state.principal = principal
-            request_principal.set(principal)
-            return principal
-    raise HTTPException(
-        status_code=401, detail="Authentication required: log in or send a valid API key"
-    )

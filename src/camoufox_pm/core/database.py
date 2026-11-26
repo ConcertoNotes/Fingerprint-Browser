@@ -1,10 +1,8 @@
-"""
-SQLite storage layer for the Camoufox profile management system.
-"""
+"""SQLite storage layer for Prism Browser."""
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -18,8 +16,6 @@ from .models import (
     ProfileStatus,
     ProxyCheckRecord,
     ProxyConfig,
-    Schedule,
-    ScheduleRun,
     UsageStats,
     normalize_tags,
 )
@@ -41,16 +37,7 @@ def _deserialize_proxy(data: dict) -> ProxyConfig:
 
 
 class StaleWriteError(Exception):
-    """A save built on an older version of the row than the one stored.
-
-    The optimistic half of this project's concurrency story; core/leases.py is
-    the pessimistic half. A lease answers "who may *run* this profile"; this
-    answers "who may *save* this row", which is a different question because a
-    profile can be edited while nobody is running it.
-
-    Raised when a version-checked update matched no rows: somebody saved first.
-    The later edit is lost loudly instead of silently overwriting theirs.
-    """
+    """A save built on an older version of the row than the one stored."""
 
     def __init__(self, profile_id: str, expected_row_version: int | None = None):
         self.profile_id = profile_id
@@ -94,28 +81,24 @@ class DatabaseManager:
         logger.info("Database initialized")
 
     async def _migrate(self):
-        """Bring an existing database up to the current schema.
-
-        Tables are created with ``CREATE TABLE IF NOT EXISTS``, so a database made
-        by an older version keeps its original columns forever. Each entry here
-        adds one column when it is missing; adding a column is safe to re-run and
-        never touches existing rows.
-        """
+        """Ensure legacy tables carry required columns prior to numbered migrations."""
         added_columns = {
             "profiles": [
                 ("fingerprint", "TEXT"),
                 ("proxy_check", "TEXT"),
-                # Lease columns (see core/leases.py). NULL means free, which is
-                # what an existing row gets when the column is added — every
-                # profile in an upgraded database starts unleased.
                 ("locked_by", "TEXT"),
                 ("lock_expires", "TIMESTAMP"),
-                # Optimistic-concurrency counter. Existing rows start at 0, so
-                # the first version-checked save of an upgraded database has a
-                # version to match against.
                 ("row_version", "BIGINT NOT NULL DEFAULT 0"),
                 ("deleted_at", "TIMESTAMP"),
                 ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+                ("isolation_config", "TEXT"),
+                ("fingerprint_hash", "TEXT"),
+                ("cloud_revision", "INTEGER NOT NULL DEFAULT 0"),
+                ("cloud_synced_at", "TEXT"),
+                ("last_exit_ip", "TEXT"),
+                ("last_exit_country", "TEXT"),
+                ("last_exit_at", "TEXT"),
+                ("ip_drift_guard", "INTEGER NOT NULL DEFAULT 1"),
             ],
         }
         for table, columns in added_columns.items():
@@ -129,33 +112,7 @@ class DatabaseManager:
         self._connection.commit()
 
     async def _create_tables(self):
-        """Create the database tables."""
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS recovery_lock (
-                id INTEGER PRIMARY KEY CHECK(id = 1), holder TEXT, expires TIMESTAMP
-            )
-        """)
-        self._connection.execute("INSERT OR IGNORE INTO recovery_lock (id) VALUES (1)")
-
-        # Named proxies are templates. Assignment copies their configuration
-        # into a profile; no foreign key can retroactively change that identity.
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS proxy_inventory (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                server TEXT NOT NULL,
-                username TEXT,
-                password TEXT,
-                country TEXT,
-                row_version BIGINT NOT NULL DEFAULT 0,
-                last_check TEXT,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
-            )
-        """)
-
-        # Profiles table
+        """Create the core database tables."""
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS profiles (
                 id TEXT PRIMARY KEY,
@@ -176,11 +133,18 @@ class DatabaseManager:
                 locked_by TEXT,
                 lock_expires TIMESTAMP,
                 row_version BIGINT NOT NULL DEFAULT 0,
-                deleted_at TIMESTAMP
+                deleted_at TIMESTAMP,
+                isolation_config TEXT,
+                fingerprint_hash TEXT,
+                cloud_revision INTEGER NOT NULL DEFAULT 0,
+                cloud_synced_at TEXT,
+                last_exit_ip TEXT,
+                last_exit_country TEXT,
+                last_exit_at TEXT,
+                ip_drift_guard INTEGER NOT NULL DEFAULT 1
             )
         """)
 
-        # Profile groups table
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS profile_groups (
                 id TEXT PRIMARY KEY,
@@ -191,7 +155,6 @@ class DatabaseManager:
             )
         """)
 
-        # Usage statistics table
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS usage_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,69 +166,6 @@ class DatabaseManager:
                 details TEXT
             )
         """)
-
-        # User accounts for the web UI. Their mere existence turns login on, so a
-        # database without rows here behaves exactly as before the table existed.
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Login sessions, keyed by the SHA-256 of the cookie token — the token
-        # itself is never stored, so this table cannot be replayed if leaked.
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP NOT NULL
-            )
-        """)
-
-        # Scheduled tasks. New tables need no _migrate entry: IF NOT EXISTS adds
-        # them to an existing database without touching what is already there.
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS schedules (
-                id TEXT PRIMARY KEY,
-                profile_id TEXT NOT NULL,
-                action TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                interval_minutes INTEGER,
-                at_time TEXT,
-                days TEXT,
-                run_minutes INTEGER,
-                enabled BOOLEAN DEFAULT 1,
-                next_run_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        self._connection.execute("""
-            CREATE TABLE IF NOT EXISTS schedule_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                schedule_id TEXT NOT NULL,
-                started_at TIMESTAMP NOT NULL,
-                finished_at TIMESTAMP,
-                outcome TEXT NOT NULL,
-                message TEXT
-            )
-        """)
-
-        # Feature-owned table definitions keep metadata modules independent.
-        from .extension_library import initialize_tables as initialize_extensions
-        from .profile_templates import initialize_tables as initialize_templates
-        from .saved_filters import initialize_tables as initialize_saved_filters
-        from .template_batches import initialize_tables as initialize_template_batches
-
-        initialize_extensions(self._connection)
-        initialize_templates(self._connection)
-        initialize_saved_filters(self._connection)
-        initialize_template_batches(self._connection)
         self._connection.commit()
 
     async def _create_indexes(self):
@@ -274,27 +174,24 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_profiles_group ON profiles(group_id)",
             "CREATE INDEX IF NOT EXISTS idx_profiles_status ON profiles(status)",
             "CREATE INDEX IF NOT EXISTS idx_profiles_created ON profiles(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_profiles_fingerprint_hash ON profiles(fingerprint_hash)",
             "CREATE INDEX IF NOT EXISTS idx_usage_stats_profile ON usage_stats(profile_id)",
             "CREATE INDEX IF NOT EXISTS idx_usage_stats_timestamp ON usage_stats(timestamp)",
-            "CREATE INDEX IF NOT EXISTS idx_schedules_profile ON schedules(profile_id)",
-            "CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id)",
         ]
-
         for index_sql in indexes:
             self._connection.execute(index_sql)
-
         self._connection.commit()
 
     # --- Profiles ---
 
     def _profile_columns(self, profile: Profile) -> tuple:
-        """The column values a save owns, in the order both writers use.
-
-        Shared so the upsert and the version-checked update cannot drift apart:
-        a column added to one and forgotten in the other would be written on a
-        create and silently ignored on an edit.
-        """
+        """Column values owned by a save, shared across upsert and guarded update."""
         profile.tags = normalize_tags(profile.tags)
+        iso_json = (
+            json.dumps(profile.isolation_config, ensure_ascii=False)
+            if profile.isolation_config is not None
+            else None
+        )
         return (
             profile.id,
             profile.name,
@@ -311,24 +208,26 @@ class DatabaseManager:
             json.dumps(profile.fingerprint) if profile.fingerprint else None,
             profile.proxy_check.model_dump_json() if profile.proxy_check else None,
             json.dumps(profile.tags, ensure_ascii=False),
+            iso_json,
+            profile.fingerprint_hash,
+            profile.cloud_revision,
+            profile.cloud_synced_at.isoformat() if profile.cloud_synced_at else None,
+            profile.last_exit_ip,
+            profile.last_exit_country,
+            profile.last_exit_at.isoformat() if profile.last_exit_at else None,
+            1 if profile.ip_drift_guard else 0,
         )
 
     def _upsert_profile(self, profile: Profile) -> None:
-        """Insert the row, or overwrite the columns a save owns.
-
-        An upsert rather than ``INSERT OR REPLACE``, which deletes the row and
-        writes a new one: that would drop the lease and version columns, so
-        renaming a profile would quietly unlock a browser another instance is
-        running. ``DO UPDATE`` names only the columns a save owns, and the ones
-        it does not name keep their values.
-        """
         self._connection.execute(
             """
             INSERT INTO profiles (
                 id, name, group_id, status, browser_settings, proxy_config,
                 extensions, storage_path, notes, created_at, updated_at, last_used,
-                fingerprint, proxy_check, tags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fingerprint, proxy_check, tags, isolation_config, fingerprint_hash,
+                cloud_revision, cloud_synced_at, last_exit_ip, last_exit_country,
+                last_exit_at, ip_drift_guard
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 group_id = excluded.group_id,
@@ -343,13 +242,21 @@ class DatabaseManager:
                 last_used = excluded.last_used,
                 fingerprint = excluded.fingerprint,
                 proxy_check = excluded.proxy_check,
-                tags = excluded.tags
+                tags = excluded.tags,
+                isolation_config = excluded.isolation_config,
+                fingerprint_hash = excluded.fingerprint_hash,
+                cloud_revision = excluded.cloud_revision,
+                cloud_synced_at = excluded.cloud_synced_at,
+                last_exit_ip = excluded.last_exit_ip,
+                last_exit_country = excluded.last_exit_country,
+                last_exit_at = excluded.last_exit_at,
+                ip_drift_guard = excluded.ip_drift_guard
         """,
             self._profile_columns(profile),
         )
 
     async def insert_profile_if_absent(self, profile: Profile) -> bool:
-        """Reserve a new local identity without overwriting an existing/trash row."""
+        """Reserve a new local identity without overwriting an existing row."""
         connection = self._connection
         if connection.in_transaction:
             raise ValueError("Profile insertion requires an idle transaction")
@@ -360,8 +267,10 @@ class DatabaseManager:
                 """INSERT INTO profiles (
                     id, name, group_id, status, browser_settings, proxy_config,
                     extensions, storage_path, notes, created_at, updated_at, last_used,
-                    fingerprint, proxy_check, tags
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fingerprint, proxy_check, tags, isolation_config, fingerprint_hash,
+                    cloud_revision, cloud_synced_at, last_exit_ip, last_exit_country,
+                    last_exit_at, ip_drift_guard
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING""",
                 self._profile_columns(profile),
             )
@@ -375,17 +284,7 @@ class DatabaseManager:
             connection.execute(f"PRAGMA synchronous={previous}")
 
     async def save_profile(self, profile: Profile, expected_row_version: int | None = None):
-        """Save a profile.
-
-        With ``expected_row_version`` the write lands only while the stored
-        ``row_version`` still matches what the caller read, and bumps it;
-        matching no rows raises ``StaleWriteError`` rather than overwriting
-        whoever got there first. That is what makes editing one profile from
-        two places safe. Without a version the row is written as before.
-
-        Either way the lease columns survive untouched: a save must never break
-        or take another instance's lease.
-        """
+        """Save a profile, optionally checking ``expected_row_version``."""
         profile.updated_at = datetime.now()
         if expected_row_version is None:
             self._upsert_profile(profile)
@@ -395,37 +294,31 @@ class DatabaseManager:
         logger.debug(f"Profile {profile.name} saved")
 
     def _save_profile_if_unchanged(self, profile: Profile, expected_row_version: int) -> None:
-        """One guarded statement: update only while the version still matches.
-
-        Never creates a row. There is nothing to guard on a row that does not
-        exist yet, and silently inserting one would turn "somebody deleted this
-        profile while you were editing it" into a resurrection.
-        """
         cursor = self._connection.execute(
             """
             UPDATE profiles SET
                 name = ?, group_id = ?, status = ?, browser_settings = ?,
                 proxy_config = ?, extensions = ?, storage_path = ?, notes = ?,
                 created_at = ?, updated_at = ?, last_used = ?, fingerprint = ?,
-                proxy_check = ?, tags = ?, row_version = row_version + 1
+                proxy_check = ?, tags = ?, isolation_config = ?, fingerprint_hash = ?,
+                cloud_revision = ?, cloud_synced_at = ?, last_exit_ip = ?,
+                last_exit_country = ?, last_exit_at = ?, ip_drift_guard = ?,
+                row_version = row_version + 1
             WHERE id = ? AND row_version = ? AND deleted_at IS NULL
             """,
             (*self._profile_columns(profile)[1:], profile.id, expected_row_version),
         )
         if cursor.rowcount == 0:
             raise StaleWriteError(profile.id, expected_row_version)
-        # Keep the caller's copy in step with the row it just wrote: the next
-        # edit reads its row_version, and it must be the one this write produced.
         profile.row_version = expected_row_version + 1
 
     async def get_profile(self, profile_id: str, include_deleted: bool = False) -> Profile | None:
-        """Get an active profile, or explicitly include the trash."""
+        """Get a profile by ID."""
         query = "SELECT * FROM profiles WHERE id = ?"
         if not include_deleted:
             query += " AND deleted_at IS NULL"
         cursor = self._connection.execute(query, (profile_id,))
         row = cursor.fetchone()
-
         if row:
             return self._row_to_profile(row)
         return None
@@ -436,12 +329,7 @@ class DatabaseManager:
         logger.debug(f"Profile {profile.name} updated")
 
     async def durable_update_profile(self, profile: Profile, expected_row_version: int) -> None:
-        """Publish a journalled profile pointer with a FULL-synchronous CAS commit.
-
-        This coroutine contains no suspension points: another event-loop task
-        cannot use the shared connection while its durability setting is changed.
-        Existing users/grants/schedules and lease columns remain untouched.
-        """
+        """Publish a profile update with a FULL-synchronous CAS commit."""
         if type(expected_row_version) is not int or expected_row_version < 0:
             raise ValueError("A current profile version is required")
         connection = self._connection
@@ -462,85 +350,92 @@ class DatabaseManager:
             connection.execute(f"PRAGMA synchronous={previous}")
 
     async def set_proxy_check(self, profile_id: str, record: ProxyCheckRecord | None) -> None:
-        """Write only the proxy check, leaving every other column alone.
-
-        A check takes seconds — up to thirty against a proxy that never answers —
-        and `save_profile` replaces the whole row. Writing back a Profile read
-        before that wait would revert anything edited during it, which is the
-        hazard already noted in profile_manager.launch_browser. This also keeps a
-        check from touching `updated_at`: asking a proxy a question is not an
-        edit, and a bulk check should not make a selection look modified.
-        """
+        """Write only the proxy check column."""
         self._connection.execute(
             "UPDATE profiles SET proxy_check = ? WHERE id = ?",
             (record.model_dump_json() if record else None, profile_id),
         )
         self._connection.commit()
 
-    async def set_launch_pin(
-        self, profile_id: str, fingerprint: dict | None, last_used: datetime
+    async def set_last_exit(
+        self,
+        profile_id: str,
+        exit_ip: str,
+        exit_country: str | None,
+        exit_at: datetime,
     ) -> None:
-        """Write only what a launch owns: the pinned machine and the timestamp.
-
-        A targeted write for the same reason as ``set_proxy_check``. A launch
-        resolves a fingerprint, which can fetch the uBlock addon over the
-        network on a fresh install, and writing a whole Profile back after that
-        would revert anything edited while it ran. Naming the two columns a
-        launch actually owns removes the hazard rather than guarding against it,
-        and leaves the row's version alone: starting a browser is not an edit of
-        the profile, so it must not make a concurrent editor's save go stale.
-        """
+        """Persist the latest verified exit IP/country after a bound browser launch."""
         self._connection.execute(
-            "UPDATE profiles SET fingerprint = ?, last_used = ?, updated_at = ? WHERE id = ?",
-            (
-                json.dumps(fingerprint) if fingerprint else None,
-                last_used.isoformat(),
-                last_used.isoformat(),
-                profile_id,
-            ),
+            "UPDATE profiles SET last_exit_ip = ?, last_exit_country = ?, last_exit_at = ? "
+            "WHERE id = ?",
+            (exit_ip, exit_country, exit_at.isoformat(), profile_id),
         )
+        self._connection.commit()
+
+    async def set_launch_pin(
+        self,
+        profile_id: str,
+        fingerprint: dict | None,
+        last_used: datetime,
+        isolation_config: dict | None = None,
+        fingerprint_hash: str | None = None,
+    ) -> None:
+        """Write only what a launch owns: pinned hardware, isolation snapshot, and timestamp."""
+        if isolation_config is not None or fingerprint_hash is not None:
+            self._connection.execute(
+                "UPDATE profiles SET fingerprint = ?, isolation_config = COALESCE(?, isolation_config), "
+                "fingerprint_hash = COALESCE(?, fingerprint_hash), last_used = ?, updated_at = ? "
+                "WHERE id = ?",
+                (
+                    json.dumps(fingerprint) if fingerprint else None,
+                    json.dumps(isolation_config, ensure_ascii=False)
+                    if isolation_config is not None
+                    else None,
+                    fingerprint_hash,
+                    last_used.isoformat(),
+                    last_used.isoformat(),
+                    profile_id,
+                ),
+            )
+        else:
+            self._connection.execute(
+                "UPDATE profiles SET fingerprint = ?, last_used = ?, updated_at = ? WHERE id = ?",
+                (
+                    json.dumps(fingerprint) if fingerprint else None,
+                    last_used.isoformat(),
+                    last_used.isoformat(),
+                    profile_id,
+                ),
+            )
         self._connection.commit()
 
     async def delete_profile(self, profile_id: str) -> bool:
-        """Delete a profile, and the schedules that would otherwise fire against it."""
-        self._connection.execute(
-            "DELETE FROM schedule_runs WHERE schedule_id IN "
-            "(SELECT id FROM schedules WHERE profile_id = ?)",
-            (profile_id,),
-        )
-        self._connection.execute("DELETE FROM schedules WHERE profile_id = ?", (profile_id,))
+        """Permanently delete a profile row (cascades its network binding)."""
         cursor = self._connection.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         self._connection.commit()
         deleted = cursor.rowcount > 0
-
         if deleted:
             logger.debug(f"Profile {profile_id} deleted")
-
         return deleted
 
-    async def set_profile_trashed(self, profile_id: str, trashed: bool) -> bool:
-        """Retain the row and directory; pause schedules when moving into trash."""
-        with self._connection:
-            cursor = self._connection.execute(
-                "UPDATE profiles SET deleted_at = ?, row_version = row_version + 1 "
-                "WHERE id = ? AND deleted_at IS " + ("NULL" if trashed else "NOT NULL"),
-                (datetime.now().isoformat() if trashed else None, profile_id),
-            )
-            if cursor.rowcount and trashed:
-                self._connection.execute(
-                    "UPDATE schedules SET enabled = 0 WHERE profile_id = ?", (profile_id,)
-                )
-        return cursor.rowcount > 0
+    def list_fingerprint_hashes(self, exclude_profile_id: str | None = None) -> set[str]:
+        """Return all non-empty fingerprint hashes currently in use across local profiles."""
+        if exclude_profile_id:
+            rows = self._connection.execute(
+                "SELECT fingerprint_hash FROM profiles "
+                "WHERE deleted_at IS NULL AND id != ? AND fingerprint_hash IS NOT NULL AND fingerprint_hash != ''",
+                (exclude_profile_id,),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT fingerprint_hash FROM profiles "
+                "WHERE deleted_at IS NULL AND fingerprint_hash IS NOT NULL AND fingerprint_hash != ''"
+            ).fetchall()
+        return {row[0] for row in rows}
 
     def _profile_filters(self, filters: dict | None = None) -> tuple[str, list]:
         filters = filters or {}
-        predicate = (
-            "deleted_at IS NOT NULL"
-            if filters.get("trashed")
-            else "1=1"
-            if filters.get("include_deleted")
-            else "deleted_at IS NULL"
-        )
+        predicate = "1=1" if filters.get("include_deleted") else "deleted_at IS NULL"
         params: list = []
         if "group" in filters:
             if filters["group"] == "__ungrouped__" or filters["group"] is None:
@@ -555,7 +450,6 @@ class DatabaseManager:
             predicate += " AND name LIKE ?"
             params.append(f"%{filters['name_like']}%")
         if filters.get("search"):
-            # Search is literal, including percent/underscore; never SQL syntax.
             value = (
                 str(filters["search"]).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
@@ -572,7 +466,7 @@ class DatabaseManager:
     async def list_profiles(
         self, filters: dict | None = None, limit: int | None = None, offset: int = 0
     ) -> list[Profile]:
-        """Filter before pagination; listing and counting use identical predicates."""
+        """List profiles with filtering and pagination."""
         predicate, params = self._profile_filters(filters)
         query = f"SELECT * FROM profiles WHERE {predicate} ORDER BY created_at DESC, id"
         if limit is not None or offset:
@@ -593,7 +487,7 @@ class DatabaseManager:
     async def set_profile_tags(
         self, profile_id: str, tags: list[str], expected_row_version: int
     ) -> Profile:
-        """A metadata-only CAS; never replaces browser settings, leases or launch pins."""
+        """Metadata-only CAS for profile tags."""
         with self._connection:
             cursor = self._connection.execute(
                 "UPDATE profiles SET tags = ?, updated_at = ?, row_version = row_version + 1 "
@@ -642,31 +536,24 @@ class DatabaseManager:
             ORDER BY pg.created_at DESC
         """)
         rows = cursor.fetchall()
-
-        groups = []
-        for row in rows:
-            group = ProfileGroup(
+        return [
+            ProfileGroup(
                 id=row["id"],
                 name=row["name"],
                 description=row["description"],
                 profile_count=row["actual_count"],
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
-            groups.append(group)
-
-        return groups
+            for row in rows
+        ]
 
     async def delete_profile_group(self, group_id: str) -> bool:
         """Delete a profile group."""
-        # Ungroup the profiles that belonged to this group
         self._connection.execute(
             "UPDATE profiles SET group_id = NULL WHERE group_id = ?", (group_id,)
         )
-
-        # Delete the group
         cursor = self._connection.execute("DELETE FROM profile_groups WHERE id = ?", (group_id,))
         self._connection.commit()
-
         return cursor.rowcount > 0
 
     # --- Statistics ---
@@ -701,12 +588,9 @@ class DatabaseManager:
         """,
             (profile_id, limit),
         )
-
         rows = cursor.fetchall()
-        stats = []
-
-        for row in rows:
-            stat = UsageStats(
+        return [
+            UsageStats(
                 id=row["id"],
                 profile_id=row["profile_id"],
                 action=row["action"],
@@ -715,336 +599,14 @@ class DatabaseManager:
                 success=bool(row["success"]),
                 details=json.loads(row["details"]) if row["details"] else None,
             )
-            stats.append(stat)
-
-        return stats
-
-    # --- Users and sessions ---
-
-    async def create_user(
-        self,
-        user_id: str,
-        username: str,
-        password_hash: str,
-        role: str = "administrator",
-        actor=None,
-    ) -> None:
-        """Create a user; raises ``ValueError`` when the username is taken."""
-        if role not in {"administrator", "operator", "viewer"}:
-            raise ValueError("Invalid role")
-        try:
-            with self._connection:
-                self._connection.execute(
-                    "INSERT INTO users (id, username, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, username, password_hash, datetime.now().isoformat(), role),
-                )
-                if actor is not None:
-                    self._audit(actor, "user.create", username, "success")
-        except sqlite3.IntegrityError as exc:
-            raise ValueError(f"User {username!r} already exists") from exc
-        # Deliberately logs the name only, never the hash.
-        logger.info(f"User {username} created")
-
-    async def get_user_by_username(self, username: str) -> dict | None:
-        cursor = self._connection.execute(
-            "SELECT id, username, password_hash, role FROM users WHERE username = ?", (username,)
-        )
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-    async def update_user_password(self, username: str, password_hash: str, actor=None) -> bool:
-        return await self.update_user_access(username, password_hash=password_hash, actor=actor)
-
-    def _protect_admin(self, username, role=None):
-        user = self._connection.execute(
-            "SELECT role FROM users WHERE username = ?", (username,)
-        ).fetchone()
-        if user and user["role"] == "administrator" and role != "administrator":
-            if (
-                self._connection.execute(
-                    "SELECT COUNT(*) FROM users WHERE role = 'administrator'"
-                ).fetchone()[0]
-                <= 1
-            ):
-                raise ValueError("Cannot remove the last administrator")
-
-    async def update_user_access(self, username, role=None, password_hash=None, actor=None):
-        with self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            if role is not None:
-                self._protect_admin(username, role)
-                self._connection.execute(
-                    "UPDATE users SET role = ? WHERE username = ?", (role, username)
-                )
-            user = self._connection.execute(
-                "SELECT id FROM users WHERE username = ?", (username,)
-            ).fetchone()
-            if not user:
-                return False
-            if password_hash is not None:
-                self._connection.execute(
-                    "UPDATE users SET password_hash = ? WHERE username = ?",
-                    (password_hash, username),
-                )
-            if password_hash is not None or role is not None:
-                self._connection.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
-            if actor is not None:
-                self._audit(actor, "user.update", username, "success")
-        return True
-
-    async def delete_user(self, username: str, actor=None) -> bool:
-        with self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            self._protect_admin(username)
-            cursor = self._connection.execute("DELETE FROM users WHERE username = ?", (username,))
-            if cursor.rowcount and actor is not None:
-                self._audit(actor, "user.delete", username, "success")
-        return cursor.rowcount > 0
-
-    def _audit(self, actor, action, object_id, result):
-        self._connection.execute(
-            "INSERT INTO audit_events(actor_kind,actor_username,action,object_id,result,created_at) VALUES (?,?,?,?,?,?)",
-            (
-                actor.kind,
-                actor.username,
-                action,
-                object_id,
-                result,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        self._connection.execute(
-            "DELETE FROM audit_events WHERE id NOT IN (SELECT id FROM audit_events ORDER BY id DESC LIMIT 10000)"
-        )
-
-    async def append_audit(self, actor, action, object_id=None, result="success"):
-        with self._connection:
-            self._audit(actor, action, object_id, result)
-
-    async def list_audit(self, offset=0, limit=100, actor=None, action=None, result=None):
-        clauses, values = [], []
-        for column, value in (("actor_username", actor), ("action", action), ("result", result)):
-            if value is not None:
-                clauses.append(column + " = ?")
-                values.append(value)
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        rows = self._connection.execute(
-            "SELECT * FROM audit_events" + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
-            (*values, min(max(limit, 1), 1000), min(max(offset, 0), 10000)),
-        )
-        return [dict(row) for row in rows]
-
-    async def count_audit(self, actor=None, action=None, result=None):
-        clauses, values = [], []
-        for column, value in (("actor_username", actor), ("action", action), ("result", result)):
-            if value is not None:
-                clauses.append(column + " = ?")
-                values.append(value)
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        return self._connection.execute(
-            "SELECT COUNT(*) FROM audit_events" + where, values
-        ).fetchone()[0]
-
-    async def set_profile_grant(self, username, profile_id, can_export=False, actor=None):
-        with self._connection:
-            self._connection.execute(
-                "INSERT INTO profile_grants(username,profile_id,can_export) VALUES (?,?,?) ON CONFLICT(username,profile_id) DO UPDATE SET can_export=excluded.can_export",
-                (username, profile_id, bool(can_export)),
-            )
-            if actor is not None:
-                self._audit(actor, "grant.set", f"{username}/{profile_id}", "success")
-
-    async def delete_profile_grant(self, username, profile_id, actor=None):
-        with self._connection:
-            cursor = self._connection.execute(
-                "DELETE FROM profile_grants WHERE username=? AND profile_id=?",
-                (username, profile_id),
-            )
-            if cursor.rowcount and actor is not None:
-                self._audit(actor, "grant.delete", f"{username}/{profile_id}", "success")
-        return cursor.rowcount > 0
-
-    async def list_profile_grants(self, username):
-        return [
-            dict(row)
-            for row in self._connection.execute(
-                "SELECT profile_id,can_export FROM profile_grants WHERE username=? ORDER BY profile_id",
-                (username,),
-            )
-        ]
-
-    async def count_users(self) -> int:
-        cursor = self._connection.execute("SELECT COUNT(*) FROM users")
-        return cursor.fetchone()[0]
-
-    async def list_users(self) -> list[dict]:
-        """Usernames and creation times only — hashes stay in the table."""
-        cursor = self._connection.execute(
-            "SELECT id, username, created_at, role FROM users ORDER BY created_at"
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    async def create_session(self, token_hash: str, user_id: str, expires_at: datetime) -> None:
-        self._connection.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token_hash, user_id, datetime.now().isoformat(), expires_at.isoformat()),
-        )
-        self._connection.commit()
-
-    async def get_session(self, token_hash: str) -> dict | None:
-        cursor = self._connection.execute(
-            """
-            SELECT s.token_hash, s.user_id, s.expires_at, u.username
-            FROM sessions s JOIN users u ON u.id = s.user_id
-            WHERE s.token_hash = ?
-            """,
-            (token_hash,),
-        )
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-    async def delete_session(self, token_hash: str) -> bool:
-        cursor = self._connection.execute(
-            "DELETE FROM sessions WHERE token_hash = ?", (token_hash,)
-        )
-        self._connection.commit()
-        return cursor.rowcount > 0
-
-    async def delete_expired_sessions(self) -> int:
-        cursor = self._connection.execute(
-            "DELETE FROM sessions WHERE expires_at <= ?", (datetime.now().isoformat(),)
-        )
-        self._connection.commit()
-        return cursor.rowcount
-
-    # --- Schedules ---
-
-    async def save_schedule(self, schedule: Schedule):
-        """Insert or replace a schedule."""
-        self._connection.execute(
-            """
-            INSERT OR REPLACE INTO schedules (
-                id, profile_id, action, kind, interval_minutes, at_time, days,
-                run_minutes, enabled, next_run_at, created_at, updated_at, actor_kind, actor_username, actor_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                schedule.id,
-                schedule.profile_id,
-                schedule.action,
-                schedule.kind,
-                schedule.interval_minutes,
-                schedule.at_time,
-                json.dumps(schedule.days) if schedule.days else None,
-                schedule.run_minutes,
-                schedule.enabled,
-                schedule.next_run_at.isoformat() if schedule.next_run_at else None,
-                schedule.created_at.isoformat(),
-                schedule.updated_at.isoformat(),
-                schedule.actor_kind,
-                schedule.actor_username,
-                schedule.actor_user_id,
-            ),
-        )
-        self._connection.commit()
-
-    async def get_schedule(self, schedule_id: str) -> Schedule | None:
-        """Get a schedule by ID."""
-        cursor = self._connection.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
-        row = cursor.fetchone()
-        return self._row_to_schedule(row) if row else None
-
-    async def list_schedules(self, profile_id: str | None = None) -> list[Schedule]:
-        """List schedules, oldest first so the UI order is stable."""
-        if profile_id:
-            cursor = self._connection.execute(
-                "SELECT * FROM schedules WHERE profile_id = ? ORDER BY created_at",
-                (profile_id,),
-            )
-        else:
-            cursor = self._connection.execute("SELECT * FROM schedules ORDER BY created_at")
-        return [self._row_to_schedule(row) for row in cursor.fetchall()]
-
-    async def delete_schedule(self, schedule_id: str) -> bool:
-        """Delete a schedule and its run history."""
-        self._connection.execute("DELETE FROM schedule_runs WHERE schedule_id = ?", (schedule_id,))
-        cursor = self._connection.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
-        self._connection.commit()
-        return cursor.rowcount > 0
-
-    async def log_schedule_run(self, run: ScheduleRun, keep: int = 20) -> ScheduleRun:
-        """Record one firing and prune the history to the newest ``keep`` rows.
-
-        Bounded per schedule rather than by age: an every-five-minutes schedule
-        would otherwise write hundreds of rows a day into a database that also
-        holds the profiles.
-        """
-        cursor = self._connection.execute(
-            """
-            INSERT INTO schedule_runs (schedule_id, started_at, finished_at, outcome, message)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (
-                run.schedule_id,
-                run.started_at.isoformat(),
-                run.finished_at.isoformat() if run.finished_at else None,
-                run.outcome,
-                run.message,
-            ),
-        )
-        run.id = cursor.lastrowid
-        self._connection.execute(
-            """
-            DELETE FROM schedule_runs WHERE schedule_id = ? AND id NOT IN (
-                SELECT id FROM schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?
-            )
-        """,
-            (run.schedule_id, run.schedule_id, keep),
-        )
-        self._connection.commit()
-        return run
-
-    async def list_schedule_runs(self, schedule_id: str, limit: int = 20) -> list[ScheduleRun]:
-        """Get the newest runs of a schedule, newest first."""
-        cursor = self._connection.execute(
-            "SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?",
-            (schedule_id, limit),
-        )
-        return [
-            ScheduleRun(
-                id=row["id"],
-                schedule_id=row["schedule_id"],
-                started_at=datetime.fromisoformat(row["started_at"]),
-                finished_at=(
-                    datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
-                ),
-                outcome=row["outcome"],
-                message=row["message"],
-            )
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
     # --- Leases ---
 
-    # See core/leases.py for what a lease is and why it exists. Every method
-    # here is a single statement whose WHERE clause carries the decision, so
-    # SQLite's write lock — not the application — picks the winner when two
-    # processes ask at once.
-
     async def acquire_lease(
         self, profile_id: str, holder: str, ttl_seconds: int, include_deleted: bool = False
     ) -> bool:
-        """Take the lease on a profile, if it is free. Never blocks.
-
-        The three arms of the guard are the three ways a lease may be taken:
-        nobody holds it, the holder's TTL ran out (their machine is gone), or
-        we already hold it. That last arm makes re-acquisition idempotent — a
-        process must be able to pick its own lease back up instead of waiting
-        out a TTL it set itself.
-
-        Returns ``False`` without touching the row when someone else holds an
-        unexpired lease; callers turn that into ``ProfileLocked``.
-        """
         cursor = self._connection.execute(
             """
             UPDATE profiles
@@ -1057,19 +619,10 @@ class DatabaseManager:
             """,
             (holder, ttl_seconds, profile_id, include_deleted, holder),
         )
-        # Without the commit the lease lives inside this connection's open
-        # transaction, where no other process can see it — the opposite of
-        # what it is for.
         self._connection.commit()
         return cursor.rowcount > 0
 
     async def renew_lease(self, profile_ids: list[str], holder: str, ttl_seconds: int) -> int:
-        """Push out the expiry of the leases we still hold; returns how many.
-
-        A profile missing from the count has been taken over or has expired.
-        The caller treats that as a lost lease rather than trying to win it
-        back: something else is already driving that identity.
-        """
         if not profile_ids:
             return 0
         placeholders = ",".join("?" for _ in profile_ids)
@@ -1085,11 +638,6 @@ class DatabaseManager:
         return cursor.rowcount
 
     async def release_lease(self, profile_id: str, holder: str) -> bool:
-        """Hand the lease back, but only if we still hold it.
-
-        Guarded on the holder id so a slow teardown cannot clear the lease of
-        whoever took the profile over after ours expired.
-        """
         cursor = self._connection.execute(
             "UPDATE profiles SET locked_by = NULL, lock_expires = NULL "
             "WHERE id = ? AND locked_by = ?",
@@ -1099,16 +647,6 @@ class DatabaseManager:
         return cursor.rowcount > 0
 
     async def force_release_lease(self, profile_id: str) -> str | None:
-        """Clear a lease whoever holds it; returns the holder it was taken from.
-
-        Read then clear, because the UPDATE cannot report the value it just
-        erased. Nothing can interleave: SQLite admits one writer at a time.
-
-        Deliberately absent from the HTTP API. A force-unlock button is the
-        quickest route back to two machines on one identity, so it lives only
-        behind the CLI, where reaching for it means deliberate shell access to
-        the host (``camoufox-pm unlock``).
-        """
         row = self._connection.execute(
             "SELECT locked_by FROM profiles WHERE id = ? AND locked_by IS NOT NULL",
             (profile_id,),
@@ -1123,12 +661,6 @@ class DatabaseManager:
         return row["locked_by"]
 
     async def get_lease(self, profile_id: str) -> tuple[str | None, str | None] | None:
-        """Return ``(locked_by, lock_expires)``, or ``None`` if no such profile.
-
-        A plain read, so it reports an expired lease exactly as stored. Callers
-        asking "is this held right now" pass the expiry through
-        :func:`~camoufox_pm.core.leases.lease_expired`, or simply try to acquire.
-        """
         cursor = self._connection.execute(
             "SELECT locked_by, lock_expires FROM profiles WHERE id = ?", (profile_id,)
         )
@@ -1138,7 +670,6 @@ class DatabaseManager:
         return row["locked_by"], row["lock_expires"]
 
     async def get_lease_holders(self) -> list[dict]:
-        """Every lease in the database, expired ones included, for inspection."""
         cursor = self._connection.execute(
             """
             SELECT id, name, locked_by, lock_expires
@@ -1158,77 +689,60 @@ class DatabaseManager:
             for row in cursor.fetchall()
         ]
 
-    async def acquire_recovery_lock(self, holder: str, ttl_seconds: int) -> bool:
-        cursor = self._connection.execute(
-            "UPDATE recovery_lock SET holder = ?, expires = datetime('now', '+' || ? || ' seconds') "
-            "WHERE id = 1 AND (holder IS NULL OR holder = ? "
-            "OR julianday(expires) < julianday('now'))",
-            (holder, ttl_seconds, holder),
-        )
-        self._connection.commit()
-        return cursor.rowcount > 0
-
-    async def release_recovery_lock(self, holder: str) -> None:
-        self._connection.execute(
-            "UPDATE recovery_lock SET holder = NULL, expires = NULL WHERE id = 1 AND holder = ?",
-            (holder,),
-        )
-        self._connection.commit()
-
     # --- Utilities ---
 
-    def _row_to_schedule(self, row) -> Schedule:
-        """Convert a database row into a Schedule object."""
-        return Schedule(
-            id=row["id"],
-            profile_id=row["profile_id"],
-            action=row["action"],
-            kind=row["kind"],
-            interval_minutes=row["interval_minutes"],
-            at_time=row["at_time"],
-            days=json.loads(row["days"]) if row["days"] else None,
-            run_minutes=row["run_minutes"],
-            enabled=bool(row["enabled"]),
-            next_run_at=(
-                datetime.fromisoformat(row["next_run_at"]) if row["next_run_at"] else None
-            ),
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            actor_kind=row["actor_kind"],
-            actor_username=row["actor_username"],
-            actor_user_id=row["actor_user_id"],
-        )
-
     def _row_to_profile(self, row) -> Profile:
-        """Convert a database row into a Profile object."""
         from .models import BrowserSettings
 
-        # Parse browser_settings
         browser_settings_data = json.loads(row["browser_settings"])
         browser_settings = BrowserSettings(**browser_settings_data)
 
-        # Parse proxy_config if present (password is decrypted on read).
         proxy = None
         if row["proxy_config"]:
             proxy = _deserialize_proxy(json.loads(row["proxy_config"]))
 
-        # Parse extensions
         extensions = json.loads(row["extensions"]) if row["extensions"] else []
 
-        # Present only once the profile has been launched, and absent entirely on
-        # rows written before the column existed.
         keys = row.keys()
         fingerprint = (
             json.loads(row["fingerprint"]) if "fingerprint" in keys and row["fingerprint"] else None
         )
+        isolation_config = None
+        if "isolation_config" in keys and row["isolation_config"]:
+            try:
+                isolation_config = json.loads(row["isolation_config"])
+            except ValueError:
+                logger.warning(f"Profile {row['id']}: unreadable isolation_config, ignoring")
+
+        fingerprint_hash = row["fingerprint_hash"] if "fingerprint_hash" in keys else None
+        cloud_revision = (
+            int(row["cloud_revision"])
+            if "cloud_revision" in keys and row["cloud_revision"] is not None
+            else 0
+        )
+        cloud_synced_at = (
+            datetime.fromisoformat(row["cloud_synced_at"])
+            if "cloud_synced_at" in keys and row["cloud_synced_at"]
+            else None
+        )
+        ip_drift_guard = (
+            bool(row["ip_drift_guard"])
+            if "ip_drift_guard" in keys and row["ip_drift_guard"] is not None
+            else True
+        )
+        last_exit_ip = row["last_exit_ip"] if "last_exit_ip" in keys else None
+        last_exit_country = row["last_exit_country"] if "last_exit_country" in keys else None
+        last_exit_at = (
+            datetime.fromisoformat(row["last_exit_at"])
+            if "last_exit_at" in keys and row["last_exit_at"]
+            else None
+        )
+
         stored_check = None
         if "proxy_check" in keys and row["proxy_check"]:
             try:
                 stored_check = ProxyCheckRecord.model_validate_json(row["proxy_check"])
             except ValidationError as error:
-                # A cosmetic column must not be able to take down the list: this
-                # runs for every row, so raising here 500s the whole screen over
-                # one unreadable value. Losing the dot is the right cost.
                 logger.warning(f"Profile {row['id']}: unreadable proxy check, ignoring ({error})")
 
         return Profile(
@@ -1246,6 +760,14 @@ class DatabaseManager:
             updated_at=datetime.fromisoformat(row["updated_at"]),
             last_used=datetime.fromisoformat(row["last_used"]) if row["last_used"] else None,
             fingerprint=fingerprint,
+            isolation_config=isolation_config,
+            fingerprint_hash=fingerprint_hash,
+            ip_drift_guard=ip_drift_guard,
+            last_exit_ip=last_exit_ip,
+            last_exit_country=last_exit_country,
+            last_exit_at=last_exit_at,
+            cloud_revision=cloud_revision,
+            cloud_synced_at=cloud_synced_at,
             proxy_check=stored_check,
             row_version=row["row_version"],
             deleted_at=datetime.fromisoformat(row["deleted_at"]) if row["deleted_at"] else None,
@@ -1267,7 +789,6 @@ class StorageManager:
         logger.info(f"StorageManager initialized with database: {db_path}")
 
     async def initialize(self):
-        """Initialize the database."""
         await self.db.initialize()
 
     # Profile methods
@@ -1289,21 +810,37 @@ class StorageManager:
     async def set_proxy_check(self, profile_id: str, record: ProxyCheckRecord | None) -> None:
         await self.db.set_proxy_check(profile_id, record)
 
-    async def set_launch_pin(
-        self, profile_id: str, fingerprint: dict | None, last_used: datetime
+    async def set_last_exit(
+        self,
+        profile_id: str,
+        exit_ip: str,
+        exit_country: str | None,
+        exit_at: datetime,
     ) -> None:
-        await self.db.set_launch_pin(profile_id, fingerprint, last_used)
+        await self.db.set_last_exit(profile_id, exit_ip, exit_country, exit_at)
+
+    async def set_launch_pin(
+        self,
+        profile_id: str,
+        fingerprint: dict | None,
+        last_used: datetime,
+        isolation_config: dict | None = None,
+        fingerprint_hash: str | None = None,
+    ) -> None:
+        await self.db.set_launch_pin(
+            profile_id, fingerprint, last_used, isolation_config, fingerprint_hash
+        )
 
     async def delete_profile(self, profile_id: str) -> bool:
         return await self.db.delete_profile(profile_id)
+
+    def list_fingerprint_hashes(self, exclude_profile_id: str | None = None) -> set[str]:
+        return self.db.list_fingerprint_hashes(exclude_profile_id)
 
     async def list_profiles(
         self, filters: dict | None = None, limit: int | None = None, offset: int = 0
     ) -> list[Profile]:
         return await self.db.list_profiles(filters, limit, offset)
-
-    async def set_profile_trashed(self, profile_id: str, trashed: bool) -> bool:
-        return await self.db.set_profile_trashed(profile_id, trashed)
 
     async def count_profiles(self, filters: dict | None = None) -> int:
         return await self.db.count_profiles(filters)
@@ -1315,93 +852,15 @@ class StorageManager:
     async def list_profile_groups(self) -> list[ProfileGroup]:
         return await self.db.list_profile_groups()
 
+    async def delete_profile_group(self, group_id: str) -> bool:
+        return await self.db.delete_profile_group(group_id)
+
     # Statistics methods
     async def log_usage(self, usage_stats: UsageStats):
         await self.db.log_usage(usage_stats)
 
     async def get_profile_usage_stats(self, profile_id: str) -> list[UsageStats]:
         return await self.db.get_profile_usage_stats(profile_id)
-
-    async def delete_profile_group(self, group_id: str) -> bool:
-        return await self.db.delete_profile_group(group_id)
-
-    async def count_audit(self, **kwargs):
-        return await self.db.count_audit(**kwargs)
-
-    async def update_user_access(self, username, role=None, password_hash=None, actor=None):
-        return await self.db.update_user_access(username, role, password_hash, actor)
-
-    async def append_audit(self, actor, action, object_id=None, result="success"):
-        return await self.db.append_audit(actor, action, object_id, result)
-
-    async def list_audit(self, **kwargs):
-        return await self.db.list_audit(**kwargs)
-
-    async def set_profile_grant(self, username, profile_id, can_export=False, actor=None):
-        return await self.db.set_profile_grant(username, profile_id, can_export, actor)
-
-    async def delete_profile_grant(self, username, profile_id, actor=None):
-        return await self.db.delete_profile_grant(username, profile_id, actor)
-
-    async def list_profile_grants(self, username):
-        return await self.db.list_profile_grants(username)
-
-    # User and session methods
-    async def create_user(
-        self,
-        user_id: str,
-        username: str,
-        password_hash: str,
-        role: str = "administrator",
-        actor=None,
-    ) -> None:
-        await self.db.create_user(user_id, username, password_hash, role, actor)
-
-    async def get_user_by_username(self, username: str) -> dict | None:
-        return await self.db.get_user_by_username(username)
-
-    async def update_user_password(self, username: str, password_hash: str, actor=None) -> bool:
-        return await self.db.update_user_password(username, password_hash, actor)
-
-    async def delete_user(self, username: str, actor=None) -> bool:
-        return await self.db.delete_user(username, actor)
-
-    async def count_users(self) -> int:
-        return await self.db.count_users()
-
-    async def list_users(self) -> list[dict]:
-        return await self.db.list_users()
-
-    async def create_session(self, token_hash: str, user_id: str, expires_at: datetime) -> None:
-        await self.db.create_session(token_hash, user_id, expires_at)
-
-    async def get_session(self, token_hash: str) -> dict | None:
-        return await self.db.get_session(token_hash)
-
-    async def delete_session(self, token_hash: str) -> bool:
-        return await self.db.delete_session(token_hash)
-
-    async def delete_expired_sessions(self) -> int:
-        return await self.db.delete_expired_sessions()
-
-    # Schedule methods
-    async def save_schedule(self, schedule: Schedule):
-        await self.db.save_schedule(schedule)
-
-    async def get_schedule(self, schedule_id: str) -> Schedule | None:
-        return await self.db.get_schedule(schedule_id)
-
-    async def list_schedules(self, profile_id: str | None = None) -> list[Schedule]:
-        return await self.db.list_schedules(profile_id)
-
-    async def delete_schedule(self, schedule_id: str) -> bool:
-        return await self.db.delete_schedule(schedule_id)
-
-    async def log_schedule_run(self, run: ScheduleRun) -> ScheduleRun:
-        return await self.db.log_schedule_run(run)
-
-    async def list_schedule_runs(self, schedule_id: str, limit: int = 20) -> list[ScheduleRun]:
-        return await self.db.list_schedule_runs(schedule_id, limit)
 
     # Lease methods
     async def acquire_lease(
@@ -1424,12 +883,5 @@ class StorageManager:
     async def get_lease_holders(self) -> list[dict]:
         return await self.db.get_lease_holders()
 
-    async def acquire_recovery_lock(self, holder: str, ttl_seconds: int) -> bool:
-        return await self.db.acquire_recovery_lock(holder, ttl_seconds)
-
-    async def release_recovery_lock(self, holder: str) -> None:
-        await self.db.release_recovery_lock(holder)
-
     async def close(self):
-        """Close the database."""
         await self.db.close()

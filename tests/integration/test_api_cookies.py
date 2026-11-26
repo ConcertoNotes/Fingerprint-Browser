@@ -1,14 +1,11 @@
 """Cookie API exposes preview counts and attachment values only deliberately."""
 
 import json
-import sqlite3
-from contextlib import closing
 
 import pytest
 
 from camoufox_pm.api.dependencies import get_profile_manager
-from camoufox_pm.core import auth
-from camoufox_pm.core import cookie_transfer as ct
+from camoufox_pm.config import get_settings
 
 SECRET = "synthetic-http-cookie-private"
 COOKIE = {
@@ -21,22 +18,7 @@ COOKIE = {
 
 
 @pytest.fixture
-async def cookie_client(client, monkeypatch):
-    monkeypatch.setattr(ct, "ensure_browser_ready", lambda: None)
-
-    async def stage(profile, directory, source, batch, mode):
-        previous = []
-        if source.exists():
-            with closing(sqlite3.connect(source)) as connection, connection:
-                previous = json.loads(connection.execute("SELECT data FROM proof").fetchone()[0])
-        cookies = previous if batch is None else batch.cookies
-        candidate = directory / "cookies.sqlite"
-        with closing(sqlite3.connect(candidate)) as connection, connection:
-            connection.execute("CREATE TABLE proof (data TEXT)")
-            connection.execute("INSERT INTO proof VALUES (?)", (json.dumps(cookies),))
-        return cookies, candidate
-
-    monkeypatch.setattr(ct, "_stage_store", stage)
+async def cookie_client(client):
     return client
 
 
@@ -111,7 +93,7 @@ async def test_running_stale_trashed_missing_and_replace_confirmation(cookie_cli
     assert (await client.get(root + "/export?row_version=0")).status_code == 409
     await manager.storage.release_lease(identifier, "remote")
     replaced = await client.post(root + "/import", json={**body, "confirm_replace": True})
-    assert replaced.status_code == 200 and replaced.json()["data"]["backup_id"]
+    assert replaced.status_code == 200 and replaced.json()["data"]["row_version"] == 1
     await manager.delete_profile(identifier)
     assert (await client.get(root + "/export?row_version=1")).status_code == 404
     assert (
@@ -122,22 +104,23 @@ async def test_running_stale_trashed_missing_and_replace_confirmation(cookie_cli
 
 
 @pytest.mark.asyncio
-async def test_all_cookie_routes_are_authenticated(cookie_client):
+async def test_all_cookie_routes_respect_api_key(cookie_client, monkeypatch):
     client = cookie_client
     identifier = await profile(client)
-    manager = get_profile_manager()
-    await manager.storage.create_user(
-        auth.new_user_id(), "cookie-user", auth.hash_password("local-test-password")
-    )
-    root = f"/api/v1/profiles/{identifier}/cookies"
-    for method, path, body in (
-        ("POST", root + "/preview", {"format": "json", "text": json.dumps([COOKIE])}),
-        (
-            "POST",
-            root + "/import",
-            {"format": "json", "text": json.dumps([COOKIE]), "row_version": 0},
-        ),
-        ("GET", root + "/export?row_version=0", None),
-    ):
-        response = await client.request(method, path, json=body)
-        assert response.status_code == 401 and SECRET not in response.text
+    monkeypatch.setenv("CPM_API_KEY", "cookie-api-secret")
+    get_settings.cache_clear()
+    try:
+        root = f"/api/v1/profiles/{identifier}/cookies"
+        for method, path, body in (
+            ("POST", root + "/preview", {"format": "json", "text": json.dumps([COOKIE])}),
+            (
+                "POST",
+                root + "/import",
+                {"format": "json", "text": json.dumps([COOKIE]), "row_version": 0},
+            ),
+            ("GET", root + "/export?row_version=0", None),
+        ):
+            response = await client.request(method, path, json=body)
+            assert response.status_code == 401 and SECRET not in response.text
+    finally:
+        get_settings.cache_clear()

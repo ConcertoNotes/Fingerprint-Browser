@@ -17,15 +17,25 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from loguru import logger
 
 from . import proxy_check
+from .cloud.entitlement import (
+    CloudEntitlementError,
+    any_cloud_nodes,
+    check_cloud_entitlement,
+    is_cloud_node,
+)
 from .ip_intel import gather_intel
 from .mihomo_manager import MihomoProcess, MihomoUnavailable
 from .models import ProxyConfig, ProxyType
+from .network_adapter import NetworkLaunchError
 from .network_catalog import NetworkCatalog, NetworkNotFound
 
 MAX_BATCH = 500
@@ -81,13 +91,16 @@ async def measure_exit(
     result.update(
         {
             "country_iso": location.country,
+            "city": location.city,
             "timezone": location.timezone,
             "latitude": location.latitude,
             "longitude": location.longitude,
             "location_source": "geoip",
         }
     )
-    if location.latitude is not None and location.longitude is not None:
+    if location.city and location.latitude is not None and location.longitude is not None:
+        result["precision"] = "city"
+    elif location.latitude is not None and location.longitude is not None:
         result["precision"] = "coordinates"
     elif location.country:
         result["precision"] = "country"
@@ -130,6 +143,50 @@ def _apply_intel_location(check: dict[str, Any], intel: dict[str, Any] | None) -
         )
 
 
+def _sanitize_probe_error(exc: BaseException) -> str:
+    """Return a credential-free error code/reason for a failed risk domain probe."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.ProxyError):
+        return "proxy_error"
+    if isinstance(exc, httpx.ConnectError):
+        return "connect_error"
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return "protocol_error"
+    return type(exc).__name__
+
+
+async def probe_risk_target(
+    client: httpx.AsyncClient, domain: str, category: str
+) -> dict[str, Any]:
+    """Probe one risk/verification domain through an isolated proxy HTTP client."""
+    url = f"https://{domain}/"
+    started = time.monotonic()
+    try:
+        response = await client.head(url)
+        if response.status_code == 405:
+            response = await client.get(url)
+        latency_ms = max(1, int((time.monotonic() - started) * 1000))
+        return {
+            "domain": domain,
+            "category": category,
+            "reachable": True,
+            "status_code": int(response.status_code),
+            "latency_ms": latency_ms,
+            "error": None,
+        }
+    except (httpx.HTTPError, OSError) as exc:
+        latency_ms = max(1, int((time.monotonic() - started) * 1000))
+        return {
+            "domain": domain,
+            "category": category,
+            "reachable": False,
+            "status_code": None,
+            "latency_ms": latency_ms,
+            "error": _sanitize_probe_error(exc),
+        }
+
+
 class NetworkProbe:
     def __init__(self, manager: Any):
         self.manager = manager
@@ -138,6 +195,9 @@ class NetworkProbe:
         self._batch_lock = asyncio.Lock()
         self.endpoints: tuple[str, ...] | None = None
         self.intel_urls: dict[str, str] | None = None
+        self.risk_domain_prober: (
+            Callable[[ProxyConfig, str, str, float], Awaitable[dict[str, Any]]] | None
+        ) = None
 
     @property
     def adapter(self):
@@ -149,6 +209,12 @@ class NetworkProbe:
     async def check_node(
         self, node_id: str, *, include_intel: bool = True, refresh_intel: bool = False
     ) -> dict[str, Any]:
+        conn = self.manager.storage.db._connection
+        if is_cloud_node(conn, node_id):
+            try:
+                check_cloud_entitlement(conn)
+            except CloudEntitlementError as exc:
+                raise NetworkLaunchError(exc.status_code, exc.code, str(exc)) from None
         catalog = NetworkCatalog(self.manager)
         node, outbound = catalog.node_outbound(node_id)
         async with _single_checks:
@@ -208,6 +274,105 @@ class NetworkProbe:
                     await engine.close()
         return catalog.get_node(node_id)
 
+    async def probe_risk_domains(
+        self, node_id: str, *, profile_id: str | None = None
+    ) -> dict[str, Any]:
+        """Verify reachability of representative risk & KYC domains through one node's tunnel."""
+        conn = self.manager.storage.db._connection
+        if is_cloud_node(conn, node_id):
+            try:
+                check_cloud_entitlement(conn)
+            except CloudEntitlementError as exc:
+                raise NetworkLaunchError(exc.status_code, exc.code, str(exc)) from None
+        catalog = NetworkCatalog(self.manager)
+        node, outbound = catalog.node_outbound(node_id)
+        policy, _ = self.manager.active_policy()
+        targets = list(policy.risk_probe_targets)
+
+        async with _single_checks:
+            running = None
+            if profile_id is not None:
+                candidate = self.adapter.runtimes.get(profile_id)
+                if (
+                    candidate is not None
+                    and candidate.engine.alive
+                    and candidate.node["id"] == node_id
+                ):
+                    running = candidate
+            if running is None:
+                running = next(
+                    (
+                        runtime
+                        for runtime in self.adapter.runtimes.values()
+                        if runtime.node["id"] == node_id and runtime.engine.alive
+                    ),
+                    None,
+                )
+
+            engine: MihomoProcess | None = None
+            exit_ip: str | None = (
+                running.exit_ip
+                if running is not None and running.exit_ip
+                else (node.get("check") or {}).get("exit_ip")
+            )
+            timeout = min(max(self._timeout(), 3.0), 6.0)
+            limit = asyncio.Semaphore(6)
+
+            try:
+                if running is not None:
+                    proxy = running.proxy_config
+                else:
+                    engine = await MihomoProcess(
+                        self.adapter.binary(),
+                        {"node-0": outbound},
+                        ["node-0"],
+                        self.adapter.runtime_root,
+                        purpose="risk-probe",
+                    ).start()
+                    proxy = _listener_proxy(engine.listeners[0])
+
+                if self.risk_domain_prober is not None:
+                    prober = self.risk_domain_prober
+
+                    async def _run_custom(target: dict[str, str]) -> dict[str, Any]:
+                        async with limit:
+                            return await prober(
+                                proxy, target["domain"], target["category"], timeout
+                            )
+
+                    probes = list(await asyncio.gather(*(_run_custom(t) for t in targets)))
+                else:
+                    async with httpx.AsyncClient(
+                        proxy=_proxy_url(proxy),
+                        timeout=httpx.Timeout(timeout),
+                        follow_redirects=False,
+                        trust_env=False,
+                    ) as client:
+
+                        async def _run_http(target: dict[str, str]) -> dict[str, Any]:
+                            async with limit:
+                                return await probe_risk_target(
+                                    client, target["domain"], target["category"]
+                                )
+
+                        probes = list(await asyncio.gather(*(_run_http(t) for t in targets)))
+            finally:
+                if engine is not None:
+                    await engine.close()
+
+        ok_count = sum(1 for item in probes if item.get("reachable"))
+        return {
+            "node_id": node_id,
+            "exit_ip": exit_ip,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "total_enforced_domains": policy.total_enforced_domains(),
+            "total_enforced_cidrs": len(policy.risk_probe_cidrs),
+            "risk_probe_groups": {k: list(v) for k, v in policy.risk_probe_groups.items()},
+            "risk_probe_cidrs": list(policy.risk_probe_cidrs),
+            "probes": probes,
+            "summary": {"ok": ok_count, "total": len(probes)},
+        }
+
     async def _gather(self, proxy: ProxyConfig, exit_ip: str) -> dict[str, Any]:
         settings = self.adapter.settings()
         values = settings.values()
@@ -239,6 +404,12 @@ class NetworkProbe:
         targets = [node_id for node_id in unique if node_id in active]
         if not targets:
             raise NetworkNotFound("None of the selected nodes are active")
+        conn = self.manager.storage.db._connection
+        if any_cloud_nodes(conn, targets):
+            try:
+                check_cloud_entitlement(conn)
+            except CloudEntitlementError as exc:
+                raise NetworkLaunchError(exc.status_code, exc.code, str(exc)) from None
         job_id = "j" + secrets.token_hex(6)
         job = {
             "id": job_id,
@@ -361,10 +532,12 @@ class NetworkProbe:
                     job,
                     names[rejected],
                     "config_invalid",
-                    "Mihomo rejected this node's configuration.",
+                    "The proxy routing engine rejected this node's configuration.",
                 )
                 outbounds = {k: v for k, v in outbounds.items() if k != rejected}
-        raise MihomoUnavailable("config_invalid", "Too many nodes were rejected by Mihomo.")
+        raise MihomoUnavailable(
+            "config_invalid", "Too many nodes were rejected by the proxy routing engine."
+        )
 
     @staticmethod
     def _record_failure(catalog, job, node_id: str, code: str, message: str) -> None:

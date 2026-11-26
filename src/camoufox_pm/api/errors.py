@@ -4,12 +4,6 @@ Every non-2xx response carries the same body:
 
     {"error": {"code": "...", "message": "...", "details": [...] | null},
      "detail": "..."}
-
-``error`` is the contract; ``detail`` mirrors ``error.message`` for clients
-written against FastAPI's default shape and goes away in 1.0. Handlers here
-catch both plain ``HTTPException`` (routes, the auth guard, 405s from Starlette)
-and request validation, so a validation failure is no longer the one error that
-looked different.
 """
 
 from collections.abc import Mapping, Sequence
@@ -24,8 +18,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from camoufox_pm.core.database import StaleWriteError
 from camoufox_pm.core.leases import ProfileLocked
 
-# Codes are keyed by status so a plain HTTPException still yields a stable,
-# machine-readable code without every raise site naming one.
 DEFAULT_CODES = {
     400: "bad_request",
     401: "unauthorized",
@@ -35,13 +27,9 @@ DEFAULT_CODES = {
     409: "conflict",
     413: "payload_too_large",
     422: "validation_error",
-    # Not in the status map above: 409 covers several conflicts, and a client
-    # needs to tell "someone else saved this" from "someone else is running it".
-    # See STALE_WRITE_CODE.
     500: "internal_error",
     503: "unavailable",
 }
-
 
 STALE_WRITE_CODE = "stale_write"
 
@@ -76,10 +64,6 @@ def install_error_handlers(app: FastAPI) -> None:
         code = getattr(exc, "code", None) or DEFAULT_CODES.get(exc.status_code, "error")
         details = getattr(exc, "details", None)
         message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        principal = getattr(request.state, "principal", None)
-        if exc.status_code >= 500 and principal is not None and principal.role != "administrator":
-            message = "Operation failed. Ask an administrator to inspect the server log."
-            details = None
         return JSONResponse(
             status_code=exc.status_code,
             content=_payload(code, message, details),
@@ -88,25 +72,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ProfileLocked)
     async def _profile_locked(request: Request, exc: ProfileLocked) -> JSONResponse:
-        principal = getattr(request.state, "principal", None)
-        message = str(exc)
-        if principal is not None and principal.role != "administrator":
-            message = "Profile is in use. Try again after it is closed."
-        return JSONResponse(status_code=409, content=_payload("conflict", message))
+        return JSONResponse(status_code=409, content=_payload("conflict", str(exc)))
 
     @app.exception_handler(StaleWriteError)
     async def _stale_write(request: Request, exc: StaleWriteError) -> JSONResponse:
-        """A lost update, refused.
-
-        Rendered in one place because several routes can raise it. They each
-        have to let it past their own catch-all first — a route that swallows it
-        reports a conflict the design intends as a server fault — so the routes
-        in profiles.py re-raise it explicitly and this is the only place that
-        decides what it looks like on the wire.
-
-        The body carries no profile: the client reloads it to see both the
-        current values and the version its retry has to be built on.
-        """
         return JSONResponse(
             status_code=409,
             content=_payload(STALE_WRITE_CODE, str(exc)),
@@ -122,23 +91,15 @@ def install_error_handlers(app: FastAPI) -> None:
         if sensitive_cookie_path or any(
             request.url.path == prefix or request.url.path.startswith(prefix + "/")
             for prefix in (
-                "/api/auth",
-                "/api/v1/auth",
-                "/api/access",
-                "/api/v1/access",
                 "/api/profiles",
                 "/api/v1/profiles",
-                "/api/proxies",
-                "/api/v1/proxies",
-                "/api/templates",
-                "/api/v1/templates",
-                "/api/extensions",
-                "/api/v1/extensions",
-                "/api/workflows",
-                "/api/v1/workflows",
+                "/api/network",
+                "/api/v1/network",
+                "/api/cloud",
+                "/api/v1/cloud",
             )
         ):
-            # Proxy lists and cookie files can contain account credentials.
+            # Proxy URLs, tokens and cookie files can contain credentials.
             errors = [
                 {key: value for key, value in error.items() if key not in {"input", "ctx"}}
                 for error in errors
@@ -150,11 +111,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
 
 def validation_message(errors: Sequence[Mapping[str, Any]]) -> str:
-    """Flatten pydantic's error list into one readable sentence.
-
-    The structured list still travels in ``error.details``; this is so ``detail``
-    and ``error.message`` stay strings even for validation failures.
-    """
+    """Flatten pydantic's error list into one readable sentence."""
     parts = []
     for error in errors[:3]:
         location = ".".join(str(piece) for piece in error.get("loc", ()))

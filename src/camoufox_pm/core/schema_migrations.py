@@ -1,18 +1,15 @@
-"""Numbered schema boundary around the legacy idempotent schema migration.
+"""Numbered schema boundary around SQLite migrations.
 
-Version zero denotes pre-updater databases. Version one records the complete
-current schema only after tables, column additions and indexes have succeeded.
-New versions must add an explicit numbered migration before increasing CURRENT.
+Current schema version is 9 (isolation engine, cloud delivery tables, and exit IP drift guard).
+Databases created by older versions (v0..v8) migrate forward cleanly while
+preserving all existing profiles, groups, subscriptions, nodes, and bindings.
 """
 
+import json
 import sqlite3
 
-CURRENT_SCHEMA = 7
+CURRENT_SCHEMA = 9
 
-# Subscription nodes, their measured exits and per-profile bindings. Secrets
-# (subscription URLs, node configurations, provider keys) are stored sealed.
-# A binding references a node that is retired rather than deleted, so a
-# refreshed subscription can never silently move a profile onto another exit.
 NETWORK_TABLES = (
     """CREATE TABLE IF NOT EXISTS network_subscriptions (
         id TEXT PRIMARY KEY,
@@ -30,7 +27,9 @@ NETWORK_TABLES = (
         row_version BIGINT NOT NULL DEFAULT 0,
         deleted_at TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        managed_by TEXT NOT NULL DEFAULT 'local',
+        cloud_source_id TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS network_nodes (
         id TEXT PRIMARY KEY,
@@ -87,6 +86,21 @@ NETWORK_TABLES = (
     )""",
 )
 
+CLOUD_TABLES = (
+    """CREATE TABLE IF NOT EXISTS cloud_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS cloud_cache (
+        kind TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+    )""",
+)
+
 
 def check_schema(connection: sqlite3.Connection) -> int:
     current = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -100,118 +114,56 @@ def check_schema(connection: sqlite3.Connection) -> int:
 def complete_migration(connection: sqlite3.Connection) -> None:
     current = check_schema(connection)
     if current == 0:
-        # Check the essential baseline before publishing migration 1. Legacy
-        # upgrades are idempotent and resumable when interrupted before here.
-        required = {"profiles", "users", "sessions", "schedules", "proxy_inventory"}
+        required = {"profiles", "profile_groups", "usage_stats"}
         actual = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         if not required <= actual:
             raise ValueError("Incomplete database migration")
-        connection.execute("PRAGMA user_version = 1")
-        connection.commit()
-
-    if current < 2:
-        with connection:
-            connection.execute("BEGIN IMMEDIATE")
-            columns = {r[1] for r in connection.execute("PRAGMA table_info(users)")}
-            if "role" not in columns:
-                connection.execute(
-                    "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'administrator' CHECK(role IN ('administrator','operator','viewer'))"
-                )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS profile_grants (username TEXT NOT NULL COLLATE NOCASE REFERENCES users(username) ON DELETE CASCADE, profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE, can_export INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(username,profile_id))"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_kind TEXT NOT NULL, actor_username TEXT, action TEXT NOT NULL, object_id TEXT, result TEXT NOT NULL, created_at TEXT NOT NULL)"
-            )
-            columns = {r[1] for r in connection.execute("PRAGMA table_info(schedules)")}
-            if "actor_kind" not in columns:
-                connection.execute(
-                    "ALTER TABLE schedules ADD COLUMN actor_kind TEXT NOT NULL DEFAULT 'system'"
-                )
-            if "actor_username" not in columns:
-                connection.execute("ALTER TABLE schedules ADD COLUMN actor_username TEXT")
-            if "actor_user_id" not in columns:
-                connection.execute("ALTER TABLE schedules ADD COLUMN actor_user_id TEXT")
-            connection.execute("PRAGMA user_version = 2")
-
-    if current < 3:
-        # Older schema-aware managers must refuse this database before touching
-        # profile paths: they do not enforce distributed checkout or apply fences.
-        with connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS manager_features (feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
-            )
-            connection.execute(
-                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('sync-admission', 1)"
-            )
-            connection.execute("PRAGMA user_version = 3")
-
-    if current < 4:
-        # Schema-3 managers cannot enforce authenticated Trash lifecycle fences.
-        # Fail their startup rather than let them reopen a retained deleted profile.
-        with connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('sync-lifecycle', 1)"
-            )
-            connection.execute("PRAGMA user_version = 4")
-
-    if current < 5:
-        # A pre-workflow manager cannot reconcile durable active-run receipts.
-        with connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, body TEXT NOT NULL)"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, active INTEGER NOT NULL, body TEXT NOT NULL)"
-            )
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS workflow_one_active_run ON workflow_runs(workflow_id) WHERE active=1"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_receipts (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE)"
-            )
-            connection.execute("PRAGMA user_version = 5")
 
     if current < 6:
-        # A pre-network manager would launch a bound profile with its stale
-        # manual proxy (or none), so it must refuse this database instead.
         with connection:
             connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS manager_features "
+                "(feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
+            )
             for statement in NETWORK_TABLES:
                 connection.execute(statement)
             connection.execute(
-                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 1)"
+                "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
             )
             connection.execute("PRAGMA user_version = 6")
 
     if current < 7:
-        # Manual node groups (fixed proxies a user bought) are subscriptions of
-        # kind 'manual'. Databases created by migration 6 before this existed
-        # carry the narrower CHECK, which SQLite can only change by rebuilding
-        # the table (https://www.sqlite.org/lang_altertable.html#otheralter).
         _allow_manual_subscriptions(connection)
+
+    if current < 8:
+        _migrate_to_v8(connection)
+
+    if current < 9:
+        _migrate_to_v9(connection)
 
 
 def _allow_manual_subscriptions(connection: sqlite3.Connection) -> None:
-    sql = connection.execute(
+    sql_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='network_subscriptions'"
-    ).fetchone()[0]
-    if "'manual'" in sql:
+    ).fetchone()
+    if sql_row is None:
+        return
+    if "'manual'" in sql_row[0]:
         with connection:
             connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS manager_features "
+                "(feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
+            )
             connection.execute(
                 "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
             )
             connection.execute("PRAGMA user_version = 7")
         return
-    # Foreign keys cannot be switched inside a transaction; nodes reference this
-    # table, and the rebuild keeps every row and ID, so their links stay valid.
     connection.execute("PRAGMA foreign_keys = OFF")
     try:
         with connection:
@@ -237,8 +189,119 @@ def _allow_manual_subscriptions(connection: sqlite3.Connection) -> None:
             if connection.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("Network subscription migration broke a reference")
             connection.execute(
+                "CREATE TABLE IF NOT EXISTS manager_features "
+                "(feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
+            )
+            connection.execute(
                 "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
             )
             connection.execute("PRAGMA user_version = 7")
     finally:
         connection.execute("PRAGMA foreign_keys = ON")
+
+
+def _migrate_to_v8(connection: sqlite3.Connection) -> None:
+    """Upgrade to schema v8: profile isolation columns, cloud tables, and subscription metadata."""
+    from .isolation.models import isolation_from_legacy_row
+
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS manager_features "
+            "(feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
+        )
+
+        # Ensure profiles has v8 columns.
+        profile_cols = {row[1] for row in connection.execute("PRAGMA table_info(profiles)")}
+        for col_name, col_def in (
+            ("isolation_config", "TEXT"),
+            ("fingerprint_hash", "TEXT"),
+            ("cloud_revision", "INTEGER NOT NULL DEFAULT 0"),
+            ("cloud_synced_at", "TEXT"),
+        ):
+            if col_name not in profile_cols:
+                connection.execute(f"ALTER TABLE profiles ADD COLUMN {col_name} {col_def}")
+
+        # Ensure network_subscriptions has v8 cloud management columns.
+        sub_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(network_subscriptions)")
+        }
+        for col_name, col_def in (
+            ("managed_by", "TEXT NOT NULL DEFAULT 'local'"),
+            ("cloud_source_id", "TEXT"),
+        ):
+            if col_name not in sub_cols:
+                connection.execute(
+                    f"ALTER TABLE network_subscriptions ADD COLUMN {col_name} {col_def}"
+                )
+
+        # Create cloud delivery tables.
+        for statement in CLOUD_TABLES:
+            connection.execute(statement)
+
+        # Create v8 indexes.
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_profiles_fingerprint_hash ON profiles(fingerprint_hash)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_network_subscriptions_cloud_source "
+            "ON network_subscriptions(cloud_source_id)"
+        )
+
+        # Backfill legacy profiles that lack isolation_config without altering hardware pins.
+        legacy_rows = connection.execute(
+            "SELECT id, browser_settings, fingerprint FROM profiles WHERE isolation_config IS NULL"
+        ).fetchall()
+        for row in legacy_rows:
+            row_id = row[0]
+            try:
+                bs = json.loads(row[1]) if row[1] else {}
+            except ValueError:
+                bs = {}
+            try:
+                fp = json.loads(row[2]) if row[2] else None
+            except ValueError:
+                fp = None
+            iso = isolation_from_legacy_row(bs, fp)
+            connection.execute(
+                "UPDATE profiles SET isolation_config = ?, fingerprint_hash = ? WHERE id = ?",
+                (
+                    iso.model_dump_json(),
+                    iso.fingerprint_hash or None,
+                    row_id,
+                ),
+            )
+
+        connection.execute(
+            "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('network-nodes', 2)"
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO manager_features(feature, version) VALUES ('isolation-cloud', 1)"
+        )
+        connection.execute("PRAGMA user_version = 8")
+
+
+def _migrate_to_v9(connection: sqlite3.Connection) -> None:
+    """Upgrade to schema v9: exit IP drift guard tracking columns on profiles."""
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS manager_features "
+            "(feature TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version > 0))"
+        )
+
+        profile_cols = {row[1] for row in connection.execute("PRAGMA table_info(profiles)")}
+        for col_name, col_def in (
+            ("last_exit_ip", "TEXT"),
+            ("last_exit_country", "TEXT"),
+            ("last_exit_at", "TEXT"),
+            ("ip_drift_guard", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if col_name not in profile_cols:
+                connection.execute(f"ALTER TABLE profiles ADD COLUMN {col_name} {col_def}")
+
+        connection.execute(
+            "INSERT OR REPLACE INTO manager_features(feature, version) "
+            "VALUES ('exit-ip-drift-guard', 1)"
+        )
+        connection.execute("PRAGMA user_version = 9")

@@ -1,0 +1,2091 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>棱镜云下发中心 · 管理员后台</title>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('prism.admin.theme');
+        var mode = saved === 'light' || saved === 'dark' ? saved : 'dark';
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    })();
+  </script>
+  <style>
+    :root,
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --sidebar: #0c0e14;
+      --canvas: #090b10;
+      --surface: #12151e;
+      --raised: #1a1f2c;
+      --line: rgba(255, 255, 255, 0.085);
+      --line-strong: rgba(255, 255, 255, 0.17);
+      --ink: #f1f4fa;
+      --ink-dim: #95a2ba;
+      --ink-faint: #647089;
+      --signal: #7c7bff;
+      --signal-soft: #6a68f5;
+      --signal-shade: rgba(124, 123, 255, 0.14);
+      --ok: #34d399;
+      --ok-dot: #10b981;
+      --ok-shade: rgba(16, 185, 129, 0.13);
+      --warn: #fbbf24;
+      --warn-dot: #f59e0b;
+      --warn-shade: rgba(245, 158, 11, 0.14);
+      --danger: #f87171;
+      --danger-dot: #ef4444;
+      --danger-shade: rgba(239, 68, 68, 0.14);
+      --specular: rgba(255, 255, 255, 0.055);
+      --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 30px -16px rgba(0, 0, 0, 0.7);
+      --shadow-modal: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 32px 84px -20px rgba(0, 0, 0, 0.85);
+      --scrim: rgba(4, 6, 12, 0.68);
+      --field-bg: rgba(9, 11, 16, 0.72);
+      --btn-primary-bg: linear-gradient(180deg, #8281ff 0%, #5e5ce6 100%);
+      --btn-primary-hover: linear-gradient(180deg, #8e8dff 0%, #6866f0 100%);
+      --btn-primary-shadow: 0 1px 0 rgba(255, 255, 255, 0.24) inset, 0 6px 18px -6px rgba(108, 106, 245, 0.65);
+      --btn-default-bg: rgba(255, 255, 255, 0.035);
+      --btn-default-hover: rgba(255, 255, 255, 0.08);
+      --row-hover: rgba(255, 255, 255, 0.03);
+      --login-bg: radial-gradient(720px 380px at 50% 8%, rgba(124, 123, 255, 0.16), transparent 65%), radial-gradient(520px 280px at 72% 22%, rgba(56, 189, 248, 0.09), transparent 70%), #090b10;
+      --token-bg: #080a0f;
+      --token-ink: #e2e8f0;
+      --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+    }
+
+    [data-theme="light"] {
+      color-scheme: light;
+      --sidebar: #f2f4f7;
+      --canvas: #f7f8fa;
+      --surface: #ffffff;
+      --raised: #eaeef4;
+      --line: rgba(15, 23, 42, 0.085);
+      --line-strong: rgba(15, 23, 42, 0.17);
+      --ink: #0d1220;
+      --ink-dim: #4a5568;
+      --ink-faint: #76829a;
+      --signal: #4f46e5;
+      --signal-soft: #4338ca;
+      --signal-shade: rgba(79, 70, 229, 0.09);
+      --ok: #059669;
+      --ok-dot: #10b981;
+      --ok-shade: rgba(16, 185, 129, 0.1);
+      --warn: #b45309;
+      --warn-dot: #f59e0b;
+      --warn-shade: rgba(245, 158, 11, 0.12);
+      --danger: #dc2626;
+      --danger-dot: #ef4444;
+      --danger-shade: rgba(239, 68, 68, 0.1);
+      --specular: rgba(255, 255, 255, 0.95);
+      --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 22px -14px rgba(15, 23, 42, 0.1);
+      --shadow-modal: 0 24px 64px -16px rgba(15, 23, 42, 0.22);
+      --scrim: rgba(15, 23, 42, 0.34);
+      --field-bg: #ffffff;
+      --btn-primary-bg: linear-gradient(180deg, #5850ec 0%, #4338ca 100%);
+      --btn-primary-hover: linear-gradient(180deg, #4f46e5 0%, #3730a3 100%);
+      --btn-primary-shadow: 0 1px 0 rgba(255, 255, 255, 0.24) inset, 0 4px 12px -4px rgba(79, 70, 229, 0.45);
+      --btn-default-bg: #ffffff;
+      --btn-default-hover: #f3f5f9;
+      --row-hover: rgba(15, 23, 42, 0.025);
+      --login-bg: radial-gradient(720px 380px at 50% 8%, rgba(79, 70, 229, 0.1), transparent 65%), #f7f8fa;
+      --token-bg: #0f172a;
+      --token-ink: #e2e8f0;
+    }
+
+    * { box-sizing: border-box; min-width: 0; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body {
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      font-variant-numeric: tabular-nums;
+    }
+    input, select, textarea, button { font: inherit; color: inherit; }
+    select option { background: var(--surface); color: var(--ink); }
+    .hidden { display: none !important; }
+    .mono { font-family: var(--font-mono); }
+
+    .prism-hairline {
+      height: 2px;
+      width: 100%;
+      background: linear-gradient(90deg, transparent 0%, rgba(56, 189, 248, 0.65) 26%, rgba(129, 140, 248, 0.9) 52%, rgba(251, 146, 60, 0.6) 76%, transparent 100%);
+    }
+
+    /* Buttons & Fields */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      font-size: 12.5px;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+    }
+    .btn:active:not(:disabled) { transform: scale(0.985); }
+    .btn-sm { height: 27px; padding: 0 9px; font-size: 12px; border-radius: var(--radius-sm); }
+    .btn:disabled { opacity: 0.42; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--btn-primary-bg);
+      border-color: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      box-shadow: var(--btn-primary-shadow);
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+    .btn-default {
+      background: var(--btn-default-bg);
+      border-color: var(--line-strong);
+      color: var(--ink);
+      box-shadow: 0 1px 0 var(--specular) inset;
+    }
+    .btn-default:hover:not(:disabled) { background: var(--btn-default-hover); }
+    .btn-ghost { background: transparent; color: var(--ink-dim); }
+    .btn-ghost:hover:not(:disabled) { background: var(--raised); color: var(--ink); }
+    .btn-danger {
+      background: var(--btn-default-bg);
+      border-color: rgba(239, 68, 68, 0.32);
+      color: var(--danger);
+    }
+    .btn-danger:hover:not(:disabled) { background: var(--danger-shade); border-color: rgba(239, 68, 68, 0.52); }
+
+    .field {
+      width: 100%;
+      background: var(--field-bg);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      padding: 7px 10px;
+      color: var(--ink);
+      outline: none;
+      transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+    }
+    .field:focus {
+      border-color: var(--signal);
+      box-shadow: 0 0 0 3px var(--signal-shade);
+      background: var(--surface);
+    }
+    textarea.field { min-height: 96px; resize: vertical; line-height: 1.5; }
+    .field-label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--ink-dim);
+      margin-bottom: 5px;
+    }
+    .field-hint { font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
+    .form-group { margin-bottom: 14px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* Pills & Badges */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--line);
+      background: var(--raised);
+      color: var(--ink-dim);
+      white-space: nowrap;
+    }
+    .pill-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .pill-ok { background: var(--ok-shade); color: var(--ok); border-color: rgba(16, 185, 129, 0.25); }
+    .pill-ok .pill-dot { background: var(--ok-dot); }
+    .pill-warn { background: var(--warn-shade); color: var(--warn); border-color: rgba(245, 158, 11, 0.28); }
+    .pill-warn .pill-dot { background: var(--warn-dot); }
+    .pill-danger { background: var(--danger-shade); color: var(--danger); border-color: rgba(239, 68, 68, 0.28); }
+    .pill-danger .pill-dot { background: var(--danger-dot); }
+    .pill-signal { background: var(--signal-shade); color: var(--signal); border-color: rgba(124, 123, 255, 0.28); }
+    .pill-muted { background: var(--raised); color: var(--ink-faint); border-color: var(--line); }
+
+    /* Login Screen */
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--login-bg);
+    }
+    .login-card {
+      position: relative;
+      width: 100%;
+      max-width: 410px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      padding: 32px 28px;
+      box-shadow: var(--shadow-modal);
+      overflow: hidden;
+    }
+    .login-card .prism-hairline {
+      position: absolute;
+      inset: 0 0 auto 0;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 18px -4px rgba(99, 102, 241, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      flex-shrink: 0;
+    }
+    .login-header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+    .login-title { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+    .login-sub { font-size: 12px; color: var(--ink-dim); margin: 2px 0 0; }
+    .alert-error {
+      background: var(--danger-shade);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.28);
+      border-radius: var(--radius-md);
+      padding: 9px 12px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }
+    .alert-info {
+      background: var(--signal-shade);
+      color: var(--signal);
+      border: 1px solid rgba(124, 123, 255, 0.25);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }
+    .alert-warn {
+      background: var(--warn-shade);
+      color: var(--warn);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }
+
+    /* App Layout */
+    .app-shell { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px 16px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 14px;
+    }
+    .sidebar-brand-name { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+    .sidebar-brand-tag { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.04em; }
+    .nav-list { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8.5px 11px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink-dim);
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+    }
+    .nav-item:hover { background: var(--raised); color: var(--ink); }
+    .nav-item.active {
+      background: var(--surface);
+      color: var(--ink);
+      border-color: var(--line-strong);
+      box-shadow: var(--shadow-card);
+    }
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      height: 16px;
+      width: 2.5px;
+      border-radius: 0 999px 999px 0;
+      background: var(--signal);
+      box-shadow: 0 0 8px var(--signal);
+    }
+    .nav-item.active svg { color: var(--signal); }
+    .sidebar-footer {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .server-meta {
+      font-size: 11px;
+      color: var(--ink-faint);
+      padding: 0 6px;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .main-area { flex: 1; padding: 24px 30px; max-width: 1440px; }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .page-title { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.015em; }
+    .page-sub { font-size: 12px; color: var(--ink-dim); margin: 3px 0 0; }
+
+    /* KPI Strip */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 1180px) {
+      .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: 15px 17px;
+      box-shadow: var(--shadow-card);
+    }
+    .kpi-label { font-size: 11.5px; color: var(--ink-faint); }
+    .kpi-value { font-size: 23px; font-weight: 600; margin-top: 5px; color: var(--ink); font-family: var(--font-mono); }
+    .kpi-value.ok { color: var(--ok); }
+    .kpi-value.warn { color: var(--warn); }
+    .kpi-value.danger { color: var(--danger); }
+    .kpi-value.signal { color: var(--signal); }
+
+    /* Panels & Tables */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+    }
+    .panel-pad { padding: 18px 20px; }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--sidebar);
+      flex-wrap: wrap;
+    }
+    .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-tab {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink-dim);
+      padding: 4px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+    }
+    .filter-tab:hover { border-color: var(--line-strong); color: var(--ink); }
+    .filter-tab.active {
+      background: var(--signal);
+      color: #fff;
+      border-color: var(--signal);
+      font-weight: 500;
+      box-shadow: 0 2px 10px -3px rgba(124, 123, 255, 0.55);
+    }
+    .search-box { width: 256px; }
+
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      background: var(--sidebar);
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    td {
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background 0.12s ease; }
+    tbody tr:hover { background: var(--row-hover); }
+    .actions-cell { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+    .empty-state {
+      text-align: center;
+      padding: 46px 20px;
+      color: var(--ink-faint);
+    }
+
+    /* Quick Expiry Chips */
+    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .chip-btn {
+      border: 1px solid var(--line-strong);
+      background: var(--raised);
+      color: var(--ink-dim);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .chip-btn:hover { background: var(--signal-shade); color: var(--signal); border-color: rgba(124, 123, 255, 0.35); }
+    .chip-btn.active { background: var(--signal); color: #fff; border-color: var(--signal); }
+
+    /* Modal & Drawer */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 100;
+    }
+    .modal {
+      position: relative;
+      width: 100%;
+      max-width: 540px;
+      max-height: 90vh;
+      background: var(--surface);
+      border-radius: 16px;
+      border: 1px solid var(--line-strong);
+      box-shadow: var(--shadow-modal);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .modal-lg { max-width: 720px; }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .modal-title { font-size: 15px; font-weight: 600; margin: 0; }
+    .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 20px;
+      border-top: 1px solid var(--line);
+      background: var(--sidebar);
+    }
+
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      backdrop-filter: blur(6px);
+      display: flex;
+      justify-content: flex-end;
+      z-index: 100;
+    }
+    .drawer {
+      width: 100%;
+      max-width: 680px;
+      height: 100vh;
+      background: var(--surface);
+      border-left: 1px solid var(--line-strong);
+      box-shadow: var(--shadow-modal);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Token Display Box */
+    .token-box {
+      background: var(--token-bg);
+      color: var(--token-ink);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      word-break: break-all;
+      letter-spacing: 0.02em;
+      margin: 12px 0;
+      user-select: all;
+    }
+
+    /* Assignment Source Card */
+    .assign-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      background: var(--canvas);
+    }
+    .assign-card.checked { border-color: rgba(124, 123, 255, 0.45); background: var(--signal-shade); }
+    .assign-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .assign-title { display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+    .assign-filters {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--line-strong);
+      display: grid;
+      gap: 8px;
+    }
+    .preview-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .preview-tag {
+      font-size: 11px;
+      background: var(--raised);
+      color: var(--ink-dim);
+      padding: 2px 7px;
+      border-radius: 5px;
+    }
+
+    .section-divider {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 18px 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--canvas);
+      gap: 12px;
+    }
+
+    /* Toast */
+    .toast-stack {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      background: var(--surface);
+      color: var(--ink);
+      border: 1px solid var(--line-strong);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 12px;
+      box-shadow: var(--shadow-modal);
+      max-width: 360px;
+    }
+    .toast.ok { border-left: 3px solid var(--ok-dot); }
+    .toast.error { border-left: 3px solid var(--danger-dot); }
+
+    @media (max-width: 860px) {
+      .app-shell { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+      .nav-list { flex-direction: row; flex-wrap: wrap; }
+      .main-area { padding: 16px; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div id="toast-stack" class="toast-stack"></div>
+
+  <!-- Login View -->
+  <div id="login-view" class="login-wrap hidden">
+    <div class="login-card">
+      <div class="prism-hairline" aria-hidden="true"></div>
+      <div class="login-header">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="36" height="36" viewBox="0 0 128 128" fill="none">
+            <defs>
+              <linearGradient id="alBg" x1="14" y1="4" x2="114" y2="126" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#0A0F24"/>
+                <stop offset="50%" stop-color="#171642"/>
+                <stop offset="100%" stop-color="#2A1D66"/>
+              </linearGradient>
+              <linearGradient id="alCyan" x1="75" y1="53" x2="122" y2="36" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#E0F2FE"/><stop offset="40%" stop-color="#38BDF8"/><stop offset="100%" stop-color="#0284C7" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="alViolet" x1="79" y1="62" x2="122" y2="62" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#F5F3FF"/><stop offset="45%" stop-color="#818CF8"/><stop offset="100%" stop-color="#9333EA" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="alAmber" x1="83" y1="71" x2="122" y2="88" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#FEF3C7"/><stop offset="45%" stop-color="#FB923C"/><stop offset="100%" stop-color="#E11D48" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <rect width="128" height="128" rx="28" fill="url(#alBg)"/>
+            <polygon points="6,71.8 43.5,59.5 43.5,62.5 6,75" fill="#FFFFFF" fill-opacity="0.9"/>
+            <polygon points="75,52.2 123,33.5 123,40 75.6,55.2" fill="url(#alCyan)"/>
+            <polygon points="79,60.8 124,59.5 124,65.2 79.6,64" fill="url(#alViolet)"/>
+            <polygon points="83,69.6 123,86 123,92.5 83.8,72.8" fill="url(#alAmber)"/>
+            <path d="M61 23 L95 96 L27 96 Z" fill="rgba(255,255,255,0.16)" stroke="#E0E7FF" stroke-opacity="0.9" stroke-width="3.2" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="login-title">棱镜云下发中心</h1>
+          <p class="login-sub">多租户节点分发与客户授权管理后台</p>
+        </div>
+      </div>
+      <div id="login-error" class="alert-error hidden"></div>
+      <form id="login-form">
+        <div class="form-group">
+          <label class="field-label" for="admin-token-input">管理员令牌 (PRISM_CLOUD_ADMIN_TOKEN)</label>
+          <input id="admin-token-input" type="password" class="field" placeholder="请输入管理员令牌" autocomplete="current-password" required />
+        </div>
+        <button id="login-submit-btn" type="submit" class="btn btn-primary" style="width:100%;height:36px;">登录管理后台</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main Dashboard -->
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="36" height="36" viewBox="0 0 128 128" fill="none">
+            <defs>
+              <linearGradient id="sbBg" x1="14" y1="4" x2="114" y2="126" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#0A0F24"/>
+                <stop offset="50%" stop-color="#171642"/>
+                <stop offset="100%" stop-color="#2A1D66"/>
+              </linearGradient>
+              <linearGradient id="sbCyan" x1="75" y1="53" x2="122" y2="36" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#E0F2FE"/><stop offset="40%" stop-color="#38BDF8"/><stop offset="100%" stop-color="#0284C7" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="sbViolet" x1="79" y1="62" x2="122" y2="62" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#F5F3FF"/><stop offset="45%" stop-color="#818CF8"/><stop offset="100%" stop-color="#9333EA" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="sbAmber" x1="83" y1="71" x2="122" y2="88" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#FEF3C7"/><stop offset="45%" stop-color="#FB923C"/><stop offset="100%" stop-color="#E11D48" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <rect width="128" height="128" rx="28" fill="url(#sbBg)"/>
+            <polygon points="6,71.8 43.5,59.5 43.5,62.5 6,75" fill="#FFFFFF" fill-opacity="0.9"/>
+            <polygon points="75,52.2 123,33.5 123,40 75.6,55.2" fill="url(#sbCyan)"/>
+            <polygon points="79,60.8 124,59.5 124,65.2 79.6,64" fill="url(#sbViolet)"/>
+            <polygon points="83,69.6 123,86 123,92.5 83.8,72.8" fill="url(#sbAmber)"/>
+            <path d="M61 23 L95 96 L27 96 Z" fill="rgba(255,255,255,0.16)" stroke="#E0E7FF" stroke-opacity="0.9" stroke-width="3.2" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="sidebar-brand-name">棱镜云下发中心</div>
+          <div class="sidebar-brand-tag">PRISM ADMIN</div>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <button class="nav-item active" data-tab="tenants">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          客户与授权管理
+        </button>
+        <button class="nav-item" data-tab="sources">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          上游节点池
+        </button>
+        <button class="nav-item" data-tab="policy">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          全局防检测策略
+        </button>
+        <button class="nav-item" data-tab="audit">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          审计日志
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div id="sidebar-policy-meta" class="server-meta">策略版本：加载中…</div>
+        <div style="display:flex;gap:6px;">
+          <button id="admin-theme-toggle" type="button" class="btn btn-default btn-sm" style="flex:1;">切换浅色</button>
+          <button id="logout-btn" class="btn btn-default btn-sm" style="flex:1;">退出登录</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <!-- TAB 1: Tenants -->
+      <section id="tab-tenants">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">客户与授权管理</h2>
+            <p class="page-sub">一客一授权码，按客户隔离下发节点、控制有效期与并发设备上限</p>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button id="refresh-tenants-btn" class="btn btn-default">刷新数据</button>
+            <button id="open-create-tenant-btn" class="btn btn-primary">+ 新建客户</button>
+          </div>
+        </div>
+
+        <div id="overview-kpis" class="kpi-grid"></div>
+
+        <div class="panel">
+          <div class="toolbar">
+            <div class="filter-tabs" id="tenant-status-tabs">
+              <button class="filter-tab active" data-status="all">全部</button>
+              <button class="filter-tab" data-status="active">正常</button>
+              <button class="filter-tab" data-status="expiring_soon">7天内到期</button>
+              <button class="filter-tab" data-status="expired">已过期</button>
+              <button class="filter-tab" data-status="disabled">已停用</button>
+            </div>
+            <input id="tenant-search" class="field search-box" placeholder="搜索客户名 / 备注 / 授权码前缀…" />
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>客户信息</th>
+                  <th>授权状态</th>
+                  <th>到期时间</th>
+                  <th>已分配节点</th>
+                  <th>设备占用</th>
+                  <th>最近活跃</th>
+                  <th style="text-align:right;">快捷操作</th>
+                </tr>
+              </thead>
+              <tbody id="tenants-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: Upstream Sources -->
+      <section id="tab-sources" class="hidden">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">上游节点池（服务端代拉）</h2>
+            <p class="page-sub">上游机场链接与订阅内容加密保存在服务端并由服务端代拉清洗，绝不向客户端暴露原始链接</p>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button id="refresh-sources-btn" class="btn btn-default">刷新列表</button>
+            <button id="open-create-source-btn" class="btn btn-primary">+ 添加上游节点池</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>源名称</th>
+                  <th>类型 / 来源</th>
+                  <th>状态</th>
+                  <th>可用节点</th>
+                  <th>最近服务端拉取</th>
+                  <th style="text-align:right;">操作</th>
+                </tr>
+              </thead>
+              <tbody id="sources-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: Global Isolation Policy -->
+      <section id="tab-policy" class="hidden">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">全局防检测隔离策略</h2>
+            <p class="page-sub">向全部客户客户端下发的浏览器指纹、DNS/WebRTC 防护及风控检测基准策略</p>
+          </div>
+          <button id="reload-policy-btn" class="btn btn-default">重新加载</button>
+        </div>
+
+        <div id="policy-summary-kpis" class="kpi-grid"></div>
+
+        <div class="panel panel-pad">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="field-label" for="policy-version-input">策略版本号</label>
+              <input id="policy-version-input" class="field mono" placeholder="如 prism-cloud-2026.12.01" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">当前 SHA-256 校验值</label>
+              <input id="policy-sha-readonly" class="field mono" readonly />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="field-label" for="policy-json-editor">策略 JSON 内容</label>
+            <textarea id="policy-json-editor" class="field mono" style="min-height:360px;"></textarea>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button id="format-policy-btn" class="btn btn-default">格式化 JSON</button>
+            <button id="save-policy-btn" class="btn btn-primary">发布新版本策略</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: Audit Logs -->
+      <section id="tab-audit" class="hidden">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">审计日志</h2>
+            <p class="page-sub">记录管理员关键操作以及客户到期、停用、超设备上限等拦截事件（保留最近 2000 条）</p>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <select id="audit-action-filter" class="field" style="width:200px;">
+              <option value="">全部事件类型</option>
+              <option value="admin_login">管理员登录</option>
+              <option value="tenant_created">新建客户</option>
+              <option value="tenant_updated">修改客户</option>
+              <option value="tenant_token_rotated">重置授权码</option>
+              <option value="tenant_assignments_updated">更新节点分配</option>
+              <option value="tenant_private_nodes_saved">保存专属静态IP</option>
+              <option value="source_refreshed">拉取上游源</option>
+              <option value="tenant_access_denied">客户到期/停用拦截</option>
+              <option value="device_access_denied">设备超限/吊销拦截</option>
+              <option value="device_revoked">踢出设备</option>
+            </select>
+            <button id="refresh-audit-btn" class="btn btn-default">刷新日志</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>操作者</th>
+                  <th>动作</th>
+                  <th>目标</th>
+                  <th>来源 IP</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody id="audit-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal Container -->
+  <div id="modal-root" class="overlay hidden"></div>
+  <!-- Drawer Container -->
+  <div id="drawer-root" class="drawer-overlay hidden"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const state = {
+        tab: 'tenants',
+        tenants: [],
+        sources: [],
+        overview: null,
+        policy: null,
+        auditLogs: [],
+        statusFilter: 'all',
+        search: '',
+        authRequired: true,
+      };
+
+      const $ = (sel) => document.querySelector(sel);
+      const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+      function esc(val) {
+        return String(val == null ? '' : val)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function toast(msg, kind = 'info') {
+        const stack = $('#toast-stack');
+        const el = document.createElement('div');
+        el.className = 'toast ' + (kind === 'ok' ? 'ok' : kind === 'error' ? 'error' : '');
+        el.textContent = msg;
+        stack.appendChild(el);
+        setTimeout(() => el.remove(), 3400);
+      }
+
+      function fmtDate(iso) {
+        if (!iso) return '—';
+        try {
+          const d = new Date(iso);
+          if (isNaN(d.getTime())) return iso;
+          const pad = (n) => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } catch {
+          return iso;
+        }
+      }
+
+      function toLocalDatetimeInput(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      function fromLocalDatetimeInput(val) {
+        if (!val || !val.trim()) return null;
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d.toISOString();
+      }
+
+      function addDaysIso(days) {
+        return new Date(Date.now() + days * 86400 * 1000).toISOString();
+      }
+
+      async function copyText(text) {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            toast('授权码已复制到剪贴板', 'ok');
+            return;
+          }
+        } catch {}
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        toast('授权码已复制到剪贴板', 'ok');
+      }
+
+      async function api(path, options = {}) {
+        const opts = {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json', ...(options.headers || {}) },
+          ...options,
+        };
+        if (opts.body && typeof opts.body !== 'string') {
+          opts.headers['Content-Type'] = 'application/json';
+          opts.body = JSON.stringify(opts.body);
+        }
+        const res = await fetch(path, opts);
+        let data = null;
+        try {
+          data = await res.json();
+        } catch {}
+        if (!res.ok) {
+          if (res.status === 401 && path !== '/v1/admin/login') {
+            showLogin('登录会话已失效，请重新登录。');
+          }
+          const msg = (data && (data.message || data.detail)) || `请求失败 (HTTP ${res.status})`;
+          throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        }
+        return data;
+      }
+
+      function showLogin(errMsg) {
+        $('#app-view').classList.add('hidden');
+        $('#login-view').classList.remove('hidden');
+        const box = $('#login-error');
+        if (errMsg) {
+          box.textContent = errMsg;
+          box.classList.remove('hidden');
+        } else {
+          box.classList.add('hidden');
+        }
+        $('#admin-token-input').focus();
+      }
+
+      function showApp() {
+        $('#login-view').classList.add('hidden');
+        $('#app-view').classList.remove('hidden');
+        $('#logout-btn').classList.toggle('hidden', !state.authRequired);
+      }
+
+      function openModal(html, { large = false } = {}) {
+        const root = $('#modal-root');
+        root.innerHTML = `<div class="modal ${large ? 'modal-lg' : ''}" role="dialog" aria-modal="true">${html}</div>`;
+        root.classList.remove('hidden');
+      }
+
+      function closeModal() {
+        const root = $('#modal-root');
+        root.classList.add('hidden');
+        root.innerHTML = '';
+      }
+
+      function openDrawer(html) {
+        const root = $('#drawer-root');
+        root.innerHTML = `<div class="drawer" role="dialog" aria-modal="true">${html}</div>`;
+        root.classList.remove('hidden');
+      }
+
+      function closeDrawer() {
+        const root = $('#drawer-root');
+        root.classList.add('hidden');
+        root.innerHTML = '';
+      }
+
+      $('#modal-root').addEventListener('click', (e) => {
+        if (e.target === $('#modal-root')) closeModal();
+      });
+      $('#drawer-root').addEventListener('click', (e) => {
+        if (e.target === $('#drawer-root')) closeDrawer();
+      });
+
+      // --- Tab Switching ---
+      function switchTab(tab) {
+        state.tab = tab;
+        $$('.nav-item').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
+        ['tenants', 'sources', 'policy', 'audit'].forEach((name) => {
+          $('#tab-' + name).classList.toggle('hidden', name !== tab);
+        });
+        if (tab === 'tenants') loadTenantsAndOverview();
+        if (tab === 'sources') loadSources();
+        if (tab === 'policy') loadPolicy();
+        if (tab === 'audit') loadAuditLogs();
+      }
+      $$('.nav-item').forEach((btn) => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+      // --- Render Helpers ---
+      function statusPill(t) {
+        const map = {
+          active: ['pill-ok', '有效'],
+          expiring_soon: ['pill-warn', `即将到期 (${t.days_remaining}天)`],
+          expired: ['pill-danger', '已过期'],
+          disabled: ['pill-muted', '已停用'],
+        };
+        const [cls, label] = map[t.effective_status] || ['pill-muted', t.effective_status];
+        return `<span class="pill ${cls}"><span class="pill-dot"></span>${esc(label)}</span>`;
+      }
+
+      function renderOverview() {
+        const o = state.overview;
+        if (!o) return;
+        $('#sidebar-policy-meta').textContent = `策略版本：${o.policy_version}`;
+        $('#overview-kpis').innerHTML = `
+          <div class="kpi-card"><div class="kpi-label">总客户数</div><div class="kpi-value">${o.total_tenants}</div></div>
+          <div class="kpi-card"><div class="kpi-label">正常活跃</div><div class="kpi-value ok">${o.active_tenants}</div></div>
+          <div class="kpi-card"><div class="kpi-label">7天内到期</div><div class="kpi-value warn">${o.expiring_soon_tenants}</div></div>
+          <div class="kpi-card"><div class="kpi-label">已过期 / 停用</div><div class="kpi-value danger">${o.expired_tenants + o.disabled_tenants}</div></div>
+          <div class="kpi-card"><div class="kpi-label">已绑定设备</div><div class="kpi-value signal">${o.active_devices}</div></div>
+          <div class="kpi-card"><div class="kpi-label">共享节点池</div><div class="kpi-value">${o.shared_sources}</div></div>
+        `;
+      }
+
+      function renderTenants() {
+        const tbody = $('#tenants-tbody');
+        if (!state.tenants.length) {
+          tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">暂无匹配的客户记录，点击右上角「+ 新建客户」创建首位客户。</div></td></tr>`;
+          return;
+        }
+        tbody.innerHTML = state.tenants.map((t) => {
+          const expiryText = t.expires_at
+            ? `<div>${esc(fmtDate(t.expires_at))}</div><div class="field-hint">${t.days_remaining > 0 ? `剩余 ${t.days_remaining} 天` : '已到期'}</div>`
+            : `<span class="pill pill-signal">永久有效</span>`;
+          const devText = t.max_devices > 0 ? `${t.active_devices} / ${t.max_devices} 台` : `${t.active_devices} / 不限`;
+          const toggleLabel = t.status === 'active' ? '停用' : '启用';
+          return `
+            <tr>
+              <td>
+                <div style="font-weight:600;">${esc(t.name)}</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
+                  <span class="mono" style="font-size:11px;color:var(--ink-faint);">${esc(t.token_prefix)}…</span>
+                  ${t.profiles_sync_enabled ? '<span class="pill pill-signal" style="padding:1px 6px;font-size:10px;">允许云同步配置</span>' : ''}
+                  ${t.notes ? `<span style="font-size:11px;color:var(--ink-faint);">${esc(t.notes)}</span>` : ''}
+                </div>
+              </td>
+              <td>${statusPill(t)}</td>
+              <td>${expiryText}</td>
+              <td>
+                <div style="font-weight:500;">${t.assigned_nodes_count} 个节点</div>
+                <div class="field-hint">${t.assigned_sources_count} 个节点组</div>
+              </td>
+              <td>
+                <button class="btn btn-default btn-sm" data-act="devices" data-id="${esc(t.id)}">${esc(devText)}</button>
+              </td>
+              <td style="font-size:12px;color:var(--ink-dim);">${esc(fmtDate(t.last_seen_at))}</td>
+              <td>
+                <div class="actions-cell">
+                  <button class="btn btn-primary btn-sm" data-act="assign" data-id="${esc(t.id)}">分配节点</button>
+                  <button class="btn btn-default btn-sm" data-act="renew" data-id="${esc(t.id)}">续期</button>
+                  <button class="btn btn-default btn-sm" data-act="toggle" data-id="${esc(t.id)}">${toggleLabel}</button>
+                  <button class="btn btn-default btn-sm" data-act="rotate" data-id="${esc(t.id)}">重置授权码</button>
+                  <button class="btn btn-ghost btn-sm" data-act="edit" data-id="${esc(t.id)}">编辑</button>
+                  <button class="btn btn-danger btn-sm" data-act="delete" data-id="${esc(t.id)}">删除</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      async function loadTenantsAndOverview() {
+        try {
+          const qs = new URLSearchParams();
+          if (state.statusFilter !== 'all') qs.set('status', state.statusFilter);
+          if (state.search.trim()) qs.set('search', state.search.trim());
+          const [overview, tenantsRes] = await Promise.all([
+            api('/v1/admin/overview'),
+            api('/v1/admin/tenants' + (qs.toString() ? '?' + qs.toString() : '')),
+          ]);
+          state.overview = overview;
+          state.tenants = tenantsRes.tenants || [];
+          renderOverview();
+          renderTenants();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      // --- One-time Token Reveal Modal ---
+      function showOneTimeTokenModal(title, tenantName, token) {
+        openModal(`
+          <div class="modal-header">
+            <h3 class="modal-title">${esc(title)}</h3>
+            <button class="btn btn-ghost btn-sm" id="close-token-x">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div class="alert-warn">此专属授权码仅展示这一次（数据库仅存 SHA-256 哈希，无法再次查看）。请立即复制并发送给客户「${esc(tenantName)}」。</div>
+            <div class="field-label">客户专属授权码</div>
+            <div class="token-box" id="revealed-token-text">${esc(token)}</div>
+            <div class="field-hint">若客户遗失或泄露，可随时在列表中点击「重置授权码」一键作废旧码并生成新码。</div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-default" id="close-token-btn">我已妥善保存</button>
+            <button class="btn btn-primary" id="copy-token-btn">一键复制授权码</button>
+          </div>
+        `);
+        $('#copy-token-btn').addEventListener('click', () => copyText(token));
+        $('#close-token-btn').addEventListener('click', closeModal);
+        $('#close-token-x').addEventListener('click', closeModal);
+      }
+
+      // --- Create / Edit Tenant Modal ---
+      function openTenantFormModal(existing = null) {
+        const isEdit = Boolean(existing);
+        openModal(`
+          <div class="modal-header">
+            <h3 class="modal-title">${isEdit ? '编辑客户配置' : '新建客户'}</h3>
+            <button class="btn btn-ghost btn-sm" id="tf-cancel-x">取消</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="field-label">客户名称 *</label>
+              <input id="tf-name" class="field" placeholder="例如：深圳跨境电商团队 A" value="${esc(existing ? existing.name : '')}" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">备注</label>
+              <input id="tf-notes" class="field" placeholder="可选：联系人 / 套餐说明" value="${esc(existing ? existing.notes : '')}" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">授权有效期</label>
+              <div class="chip-row" id="tf-expiry-chips">
+                <button type="button" class="chip-btn" data-days="7">+7天</button>
+                <button type="button" class="chip-btn ${!isEdit ? 'active' : ''}" data-days="30">+30天</button>
+                <button type="button" class="chip-btn" data-days="90">+90天</button>
+                <button type="button" class="chip-btn" data-days="365">+1年</button>
+                <button type="button" class="chip-btn" data-days="0">永不过期</button>
+              </div>
+              <input id="tf-expires" type="datetime-local" class="field" value="${esc(isEdit ? toLocalDatetimeInput(existing.expires_at) : toLocalDatetimeInput(addDaysIso(30)))}" />
+              <div class="field-hint">留空表示永不过期；到期后客户端云节点将自动吊销，客户本地节点不受影响。</div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="field-label">设备数上限 (0 = 不限)</label>
+                <input id="tf-max-devices" type="number" min="0" max="1000" class="field" value="${existing ? existing.max_devices : 3}" />
+              </div>
+              <div class="form-group">
+                <label class="field-label">离线宽限时长 (小时)</label>
+                <input id="tf-grace" type="number" min="0" max="8760" class="field" value="${existing ? existing.offline_grace_hours : 24}" />
+              </div>
+            </div>
+            <div class="switch-row">
+              <div>
+                <div style="font-weight:500;">允许云端同步浏览器配置（指纹/Cookie）</div>
+                <div class="field-hint" style="margin-top:2px;">默认关闭；开启后该客户可在多台设备间同步加密浏览器快照（与其他客户严格隔离）。</div>
+              </div>
+              <input id="tf-sync" type="checkbox" ${existing && existing.profiles_sync_enabled ? 'checked' : ''} style="width:18px;height:18px;" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-default" id="tf-cancel">取消</button>
+            <button class="btn btn-primary" id="tf-save">${isEdit ? '保存修改' : '创建并生成授权码'}</button>
+          </div>
+        `);
+
+        $$('#tf-expiry-chips .chip-btn').forEach((chip) => {
+          chip.addEventListener('click', () => {
+            $$('#tf-expiry-chips .chip-btn').forEach((c) => c.classList.remove('active'));
+            chip.classList.add('active');
+            const days = Number(chip.dataset.days);
+            $('#tf-expires').value = days > 0 ? toLocalDatetimeInput(addDaysIso(days)) : '';
+          });
+        });
+
+        $('#tf-cancel').addEventListener('click', closeModal);
+        $('#tf-cancel-x').addEventListener('click', closeModal);
+        $('#tf-save').addEventListener('click', async () => {
+          const name = $('#tf-name').value.trim();
+          if (!name) return toast('请填写客户名称', 'error');
+          const body = {
+            name,
+            notes: $('#tf-notes').value.trim(),
+            expires_at: fromLocalDatetimeInput($('#tf-expires').value),
+            max_devices: Number($('#tf-max-devices').value || 0),
+            offline_grace_hours: Number($('#tf-grace').value || 24),
+            profiles_sync_enabled: $('#tf-sync').checked,
+          };
+          try {
+            if (isEdit) {
+              await api(`/v1/admin/tenants/${encodeURIComponent(existing.id)}`, { method: 'PATCH', body });
+              closeModal();
+              toast('客户信息已更新', 'ok');
+              loadTenantsAndOverview();
+            } else {
+              const res = await api('/v1/admin/tenants', { method: 'POST', body });
+              toast('客户创建成功', 'ok');
+              loadTenantsAndOverview();
+              showOneTimeTokenModal('客户创建成功 · 专属授权码', res.tenant.name, res.token);
+            }
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        });
+      }
+
+      // --- Quick Renew Modal ---
+      function openRenewModal(tenant) {
+        openModal(`
+          <div class="modal-header">
+            <h3 class="modal-title">快捷续期 · ${esc(tenant.name)}</h3>
+            <button class="btn btn-ghost btn-sm" id="rn-close-x">取消</button>
+          </div>
+          <div class="modal-body">
+            <div class="alert-info">当前到期时间：${tenant.expires_at ? esc(fmtDate(tenant.expires_at)) : '永久有效'}</div>
+            <div class="field-label">快捷延长（在当前未过期时间或当前时刻基础上叠加）</div>
+            <div class="chip-row" style="margin-bottom:16px;">
+              <button class="btn btn-default btn-sm" data-extend="7">+7天</button>
+              <button class="btn btn-default btn-sm" data-extend="30">+30天</button>
+              <button class="btn btn-default btn-sm" data-extend="90">+90天</button>
+              <button class="btn btn-default btn-sm" data-extend="365">+1年</button>
+              <button class="btn btn-default btn-sm" id="rn-forever">设为永不过期</button>
+            </div>
+            <div class="form-group">
+              <label class="field-label">或指定精确到期日期</label>
+              <input id="rn-custom-date" type="datetime-local" class="field" value="${esc(toLocalDatetimeInput(tenant.expires_at || addDaysIso(30)))}" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-default" id="rn-cancel">取消</button>
+            <button class="btn btn-primary" id="rn-save-date">保存指定日期</button>
+          </div>
+        `);
+        $('#rn-close-x').addEventListener('click', closeModal);
+        $('#rn-cancel').addEventListener('click', closeModal);
+        $$('[data-extend]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            try {
+              await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+                method: 'PATCH',
+                body: { extend_days: Number(btn.dataset.extend) },
+              });
+              closeModal();
+              toast(`已为 ${tenant.name} 续期 ${btn.dataset.extend} 天`, 'ok');
+              loadTenantsAndOverview();
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+          });
+        });
+        $('#rn-forever').addEventListener('click', async () => {
+          try {
+            await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+              method: 'PATCH',
+              body: { expires_at: null },
+            });
+            closeModal();
+            toast(`已将 ${tenant.name} 设为永不过期`, 'ok');
+            loadTenantsAndOverview();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        });
+        $('#rn-save-date').addEventListener('click', async () => {
+          const iso = fromLocalDatetimeInput($('#rn-custom-date').value);
+          try {
+            await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}`, {
+              method: 'PATCH',
+              body: { expires_at: iso },
+            });
+            closeModal();
+            toast('到期时间已更新', 'ok');
+            loadTenantsAndOverview();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        });
+      }
+
+      // --- Devices Modal ---
+      async function openDevicesModal(tenant) {
+        try {
+          const data = await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/devices`);
+          const limitLabel = data.max_devices > 0 ? `${data.active_devices} / ${data.max_devices} 台` : `${data.active_devices} 台（不限）`;
+          const rowsHtml = (data.devices || []).length
+            ? data.devices.map((d) => `
+                <tr>
+                  <td>
+                    <div style="font-weight:500;">${esc(d.device_label || '未命名设备')}</div>
+                    <div class="mono field-hint">${esc(d.device_id)}</div>
+                  </td>
+                  <td>${esc(d.client_version || '—')}</td>
+                  <td>${d.revoked ? '<span class="pill pill-danger">已吊销</span>' : '<span class="pill pill-ok">正常</span>'}</td>
+                  <td style="font-size:12px;">${esc(fmtDate(d.last_seen_at))}</td>
+                  <td style="text-align:right;">
+                    ${d.revoked
+                      ? `<button class="btn btn-default btn-sm" data-purge-dev="${esc(d.device_id)}">清除记录</button>`
+                      : `<button class="btn btn-danger btn-sm" data-kick-dev="${esc(d.device_id)}">踢下线</button>`}
+                  </td>
+                </tr>
+              `).join('')
+            : `<tr><td colspan="5"><div class="empty-state">该客户尚无设备登录记录。</div></td></tr>`;
+
+          openModal(`
+            <div class="modal-header">
+              <h3 class="modal-title">已登录设备 · ${esc(tenant.name)} (${esc(limitLabel)})</h3>
+              <button class="btn btn-ghost btn-sm" id="dev-close-x">关闭</button>
+            </div>
+            <div class="modal-body" style="padding:0;">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>设备</th><th>版本</th><th>状态</th><th>最近同步</th><th style="text-align:right;">操作</th></tr></thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-default" id="dev-close">关闭</button>
+            </div>
+          `, { large: true });
+          $('#dev-close-x').addEventListener('click', closeModal);
+          $('#dev-close').addEventListener('click', closeModal);
+          $$('[data-kick-dev]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+              const devId = btn.dataset.kickDev;
+              try {
+                await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/devices/${encodeURIComponent(devId)}`, { method: 'DELETE' });
+                toast('设备已踢下线并释放名额', 'ok');
+                loadTenantsAndOverview();
+                openDevicesModal(tenant);
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+            });
+          });
+          $$('[data-purge-dev]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+              const devId = btn.dataset.purgeDev;
+              try {
+                await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/devices/${encodeURIComponent(devId)}?purge=true`, { method: 'DELETE' });
+                toast('已清除吊销设备记录', 'ok');
+                openDevicesModal(tenant);
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+            });
+          });
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      // --- Assign Nodes Drawer ---
+      function filterPreviewNodes(nodes, includeRaw, excludeRaw, nodeKeys = []) {
+        const splitKw = (s) => (s || '').split(/[|,，\r\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+        const inc = splitKw(includeRaw);
+        const exc = splitKw(excludeRaw);
+        const keySet = new Set(Array.isArray(nodeKeys) ? nodeKeys.filter(Boolean) : []);
+        return (nodes || []).filter((n) => {
+          if (keySet.size) {
+            const fullKey = String(n.key || '');
+            const baseKey = fullKey.split('#')[0];
+            if (!keySet.has(fullKey) && !keySet.has(baseKey)) return false;
+          }
+          const name = String(n.name || '').toLowerCase();
+          if (inc.length && !inc.some((k) => name.includes(k))) return false;
+          if (exc.length && exc.some((k) => name.includes(k))) return false;
+          return true;
+        });
+      }
+
+      async function openAssignDrawer(tenant) {
+        try {
+          const [sharedRes, assignRes] = await Promise.all([
+            api('/v1/admin/sources?scope=shared&include_nodes=true'),
+            api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/assignments`),
+          ]);
+          const sharedSources = sharedRes.sources || [];
+          const assignments = assignRes.assignments || [];
+          const assignMap = {};
+          assignments.forEach((a) => { assignMap[a.source_id] = a; });
+          const privateSources = assignments.filter((a) => a.scope === 'tenant_private');
+
+          const sharedCardsHtml = sharedSources.length
+            ? sharedSources.map((src) => {
+                const a = assignMap[src.id];
+                const checked = Boolean(a && a.enabled);
+                const incStr = a && a.node_filter ? (a.node_filter.include_keywords || []).join('|') : '';
+                const excStr = a && a.node_filter ? (a.node_filter.exclude_keywords || []).join('|') : '';
+                const overrideName = (a && a.display_name_override) || '';
+                return `
+                  <div class="assign-card ${checked ? 'checked' : ''}" data-assign-src="${esc(src.id)}">
+                    <div class="assign-head">
+                      <label class="assign-title">
+                        <input type="checkbox" class="assign-chk" ${checked ? 'checked' : ''} />
+                        <span>${esc(src.name)}</span>
+                        <span class="pill">${src.node_count} 个节点</span>
+                      </label>
+                      <span class="pill pill-signal assign-match-badge">已命中 0 个</span>
+                    </div>
+                    <div class="assign-filters ${checked ? '' : 'hidden'}">
+                      <div class="form-row">
+                        <div>
+                          <label class="field-label">仅包含关键词（可选，竖线 | 分隔）</label>
+                          <input class="field assign-inc" placeholder="如：美国|洛杉矶|US" value="${esc(incStr)}" />
+                        </div>
+                        <div>
+                          <label class="field-label">排除关键词（可选）</label>
+                          <input class="field assign-exc" placeholder="如：香港|倍率|测试" value="${esc(excStr)}" />
+                        </div>
+                      </div>
+                      <div>
+                        <label class="field-label">客户端展示分组名覆盖（可选）</label>
+                        <input class="field assign-override" placeholder="留空则沿用「${esc(src.name)}」" value="${esc(overrideName)}" />
+                      </div>
+                      <div class="preview-tags assign-preview-tags"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('')
+            : `<div class="alert-info">当前还没有「共享节点池」。你可以先去左侧「上游节点池」添加机场订阅，或在下方直接为该客户粘贴专属静态 IP。</div>`;
+
+          const privateListHtml = privateSources.length
+            ? privateSources.map((ps) => `
+                <div class="assign-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                  <div>
+                    <div style="font-weight:500;">${esc(ps.source_name)} <span class="pill pill-ok">${ps.matched_nodes_count} 个专属节点</span></div>
+                    <div class="preview-tags">
+                      ${(ps.matched_nodes_preview || []).slice(0, 6).map((n) => `<span class="preview-tag">${esc(n.name)} (${esc(n.type)})</span>`).join('')}
+                    </div>
+                  </div>
+                  <button class="btn btn-danger btn-sm" data-del-priv="${esc(ps.source_id)}">删除</button>
+                </div>
+              `).join('')
+            : `<div class="field-hint" style="margin-bottom:10px;">该客户暂未配置专属静态 IP。</div>`;
+
+          openDrawer(`
+            <div class="modal-header">
+              <div>
+                <h3 class="modal-title">节点分配 · ${esc(tenant.name)}</h3>
+                <div class="field-hint">所有节点均在服务端清洗后以 sealed_nodes 形式下发，不暴露上游链接</div>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="dr-close-x">关闭</button>
+            </div>
+            <div class="modal-body">
+              <div class="section-divider" style="margin-top:0;">
+                <span>一、勾选分配共享节点池</span>
+                <button class="btn btn-primary btn-sm" id="dr-save-shared">保存共享池分配</button>
+              </div>
+              <div id="dr-shared-list">${sharedCardsHtml}</div>
+
+              <div class="section-divider"><span>二、客户专属独享静态 IP</span></div>
+              <div id="dr-private-list">${privateListHtml}</div>
+
+              <div class="assign-card" style="background:var(--sidebar);">
+                <div class="form-row">
+                  <div class="form-group" style="margin-bottom:8px;">
+                    <label class="field-label">专属分组名称</label>
+                    <input id="priv-name" class="field" value="专属静态 IP" />
+                  </div>
+                  <div class="form-group" style="margin-bottom:8px;">
+                    <label class="field-label">无协议前缀时的默认类型</label>
+                    <select id="priv-proto" class="field">
+                      <option value="socks5">SOCKS5</option>
+                      <option value="http" selected>HTTP</option>
+                      <option value="https">HTTPS</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label class="field-label">粘贴专属静态 IP / 代理链接（每行一条，支持 IP:端口:账密、socks5://、vless:// 等）</label>
+                  <textarea id="priv-text" class="field mono" placeholder="socks5://user:pass@203.0.113.10:1080#美国独享01&#10;198.51.100.22:8080:alice:secret"></textarea>
+                </div>
+                <button class="btn btn-primary btn-sm" id="priv-add-btn">保存并立即生效</button>
+              </div>
+            </div>
+          `);
+
+          $('#dr-close-x').addEventListener('click', closeDrawer);
+
+          const srcById = {};
+          sharedSources.forEach((s) => { srcById[s.id] = s; });
+
+          function refreshCardPreview(card) {
+            const srcId = card.dataset.assignSrc;
+            const src = srcById[srcId];
+            const chk = card.querySelector('.assign-chk');
+            const filters = card.querySelector('.assign-filters');
+            const badge = card.querySelector('.assign-match-badge');
+            const tagsBox = card.querySelector('.assign-preview-tags');
+            const preservedNodeKeys = (assignMap[srcId] && assignMap[srcId].node_filter && assignMap[srcId].node_filter.node_keys) || [];
+            card.classList.toggle('checked', chk.checked);
+            filters.classList.toggle('hidden', !chk.checked);
+            const matched = filterPreviewNodes(
+              src.nodes_preview || [],
+              card.querySelector('.assign-inc').value,
+              card.querySelector('.assign-exc').value,
+              preservedNodeKeys
+            );
+            badge.textContent = chk.checked ? `已命中 ${matched.length} 个` : '未勾选';
+            badge.className = 'pill assign-match-badge ' + (chk.checked ? (matched.length ? 'pill-signal' : 'pill-warn') : 'pill-muted');
+            tagsBox.innerHTML = matched.slice(0, 8).map((n) => `<span class="preview-tag">${esc(n.name)}</span>`).join('')
+              + (matched.length > 8 ? `<span class="preview-tag">+${matched.length - 8} 个…</span>` : '');
+          }
+
+          $$('[data-assign-src]').forEach((card) => {
+            refreshCardPreview(card);
+            card.querySelector('.assign-chk').addEventListener('change', () => refreshCardPreview(card));
+            card.querySelector('.assign-inc').addEventListener('input', () => refreshCardPreview(card));
+            card.querySelector('.assign-exc').addEventListener('input', () => refreshCardPreview(card));
+          });
+
+          $('#dr-save-shared').addEventListener('click', async () => {
+            const payload = [];
+            $$('[data-assign-src]').forEach((card) => {
+              if (!card.querySelector('.assign-chk').checked) return;
+              const srcId = card.dataset.assignSrc;
+              const inc = card.querySelector('.assign-inc').value.split(/[|,，\r\n]+/).map((x) => x.trim()).filter(Boolean);
+              const exc = card.querySelector('.assign-exc').value.split(/[|,，\r\n]+/).map((x) => x.trim()).filter(Boolean);
+              const override = card.querySelector('.assign-override').value.trim();
+              const preservedNodeKeys = (assignMap[srcId] && assignMap[srcId].node_filter && assignMap[srcId].node_filter.node_keys) || [];
+              payload.push({
+                source_id: srcId,
+                display_name_override: override || null,
+                node_filter: { include_keywords: inc, exclude_keywords: exc, node_keys: preservedNodeKeys },
+                enabled: true,
+              });
+            });
+            try {
+              await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/assignments`, {
+                method: 'PUT',
+                body: { assignments: payload, replace_private: false },
+              });
+              toast('共享节点池分配已保存', 'ok');
+              loadTenantsAndOverview();
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+          });
+
+          $('#priv-add-btn').addEventListener('click', async () => {
+            const text = $('#priv-text').value.trim();
+            if (!text) return toast('请先粘贴至少一条静态 IP 节点', 'error');
+            try {
+              const res = await api(`/v1/admin/tenants/${encodeURIComponent(tenant.id)}/private-nodes`, {
+                method: 'POST',
+                body: {
+                  name: $('#priv-name').value.trim() || '专属静态 IP',
+                  nodes_text: text,
+                  default_type: $('#priv-proto').value,
+                },
+              });
+              toast(`已添加 ${res.node_count} 个专属节点`, 'ok');
+              loadTenantsAndOverview();
+              openAssignDrawer(tenant);
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+          });
+
+          $$('[data-del-priv]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+              if (!confirm('确认删除该客户的这组专属静态节点吗？')) return;
+              try {
+                await api(`/v1/admin/sources/${encodeURIComponent(btn.dataset.delPriv)}`, { method: 'DELETE' });
+                toast('已删除专属静态节点组', 'ok');
+                loadTenantsAndOverview();
+                openAssignDrawer(tenant);
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+            });
+          });
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      // --- Tenant Row Action Delegation ---
+      $('#tenants-tbody').addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        const id = btn.dataset.id;
+        const act = btn.dataset.act;
+        const tenant = state.tenants.find((t) => t.id === id);
+        if (!tenant) return;
+
+        if (act === 'edit') return openTenantFormModal(tenant);
+        if (act === 'renew') return openRenewModal(tenant);
+        if (act === 'devices') return openDevicesModal(tenant);
+        if (act === 'assign') return openAssignDrawer(tenant);
+
+        if (act === 'toggle') {
+          const nextStatus = tenant.status === 'active' ? 'disabled' : 'active';
+          try {
+            await api(`/v1/admin/tenants/${encodeURIComponent(id)}`, {
+              method: 'PATCH',
+              body: { status: nextStatus },
+            });
+            toast(nextStatus === 'active' ? `已启用 ${tenant.name}` : `已停用 ${tenant.name}`, 'ok');
+            loadTenantsAndOverview();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          return;
+        }
+
+        if (act === 'rotate') {
+          if (!confirm(`确认重置「${tenant.name}」的授权码吗？旧授权码将立即失效，客户需输入新码重新激活。`)) return;
+          try {
+            const res = await api(`/v1/admin/tenants/${encodeURIComponent(id)}/rotate-token`, { method: 'POST' });
+            loadTenantsAndOverview();
+            showOneTimeTokenModal('授权码已重置', res.tenant.name, res.token);
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          return;
+        }
+
+        if (act === 'delete') {
+          if (!confirm(`确认永久删除客户「${tenant.name}」及其设备和私有节点配置吗？此操作不可恢复。`)) return;
+          try {
+            await api(`/v1/admin/tenants/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            toast(`已删除客户 ${tenant.name}`, 'ok');
+            loadTenantsAndOverview();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        }
+      });
+
+      // --- Upstream Sources Tab ---
+      async function loadSources() {
+        try {
+          const res = await api('/v1/admin/sources?scope=shared&include_nodes=true');
+          state.sources = res.sources || [];
+          renderSources();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      function renderSources() {
+        const tbody = $('#sources-tbody');
+        if (!state.sources.length) {
+          tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">暂无共享上游节点池，点击右上角「+ 添加上游节点池」导入机场订阅或静态 IP。</div></td></tr>`;
+          return;
+        }
+        const kindMap = { url: '机场链接 (URL)', content: '订阅文本 / YAML', manual: '手动静态 IP 池' };
+        tbody.innerHTML = state.sources.map((s) => `
+          <tr>
+            <td>
+              <div style="font-weight:600;">${esc(s.name)}</div>
+              <div class="mono field-hint">${esc(s.id)}</div>
+            </td>
+            <td>
+              <span class="pill pill-signal">${esc(kindMap[s.kind] || s.kind)}</span>
+              <div class="field-hint mono">${esc(s.payload_preview)}</div>
+            </td>
+            <td>${s.enabled ? '<span class="pill pill-ok"><span class="pill-dot"></span>已启用</span>' : '<span class="pill pill-muted">已停用</span>'}</td>
+            <td>
+              <div style="font-weight:600;">${s.node_count} 个</div>
+              ${s.last_error ? `<div style="font-size:11px;color:var(--danger);max-width:240px;">${esc(s.last_error)}</div>` : ''}
+            </td>
+            <td style="font-size:12px;color:var(--ink-dim);">${esc(fmtDate(s.last_fetched_at))}</td>
+            <td>
+              <div class="actions-cell">
+                <button class="btn btn-primary btn-sm" data-sact="refresh" data-id="${esc(s.id)}">服务端拉取测试</button>
+                <button class="btn btn-default btn-sm" data-sact="preview" data-id="${esc(s.id)}">预览节点</button>
+                <button class="btn btn-default btn-sm" data-sact="toggle" data-id="${esc(s.id)}">${s.enabled ? '停用' : '启用'}</button>
+                <button class="btn btn-danger btn-sm" data-sact="delete" data-id="${esc(s.id)}">删除</button>
+              </div>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      function openCreateSourceModal() {
+        openModal(`
+          <div class="modal-header">
+            <h3 class="modal-title">添加共享上游节点池</h3>
+            <button class="btn btn-ghost btn-sm" id="sf-close-x">取消</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="field-label">节点池名称 *</label>
+              <input id="sf-name" class="field" placeholder="例如：主力欧美高速机场池" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">上游类型</label>
+              <select id="sf-kind" class="field">
+                <option value="url">上游机场 HTTPS 订阅链接（仅服务端拉取）</option>
+                <option value="content">Clash YAML / Base64 订阅内容</option>
+                <option value="manual">共享静态 IP / 分享链接列表</option>
+              </select>
+            </div>
+            <div id="sf-url-box" class="form-group">
+              <label class="field-label">HTTPS 订阅 URL *</label>
+              <input id="sf-url" class="field mono" placeholder="https://sub.example.com/api/v1/client/subscribe?token=..." />
+              <div class="field-hint">URL 将使用服务端密钥加密存储，且仅在服务端发起拉取，绝不下发给客户端。</div>
+            </div>
+            <div id="sf-content-box" class="form-group hidden">
+              <label class="field-label">Clash YAML 或 Base64 订阅内容 *</label>
+              <textarea id="sf-content" class="field mono" placeholder="proxies:&#10;  - {name: ...}"></textarea>
+            </div>
+            <div id="sf-manual-box" class="form-group hidden">
+              <label class="field-label">静态 IP 或代理链接（每行一条）*</label>
+              <textarea id="sf-manual" class="field mono" placeholder="socks5://user:pass@ip:port#备注"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-default" id="sf-cancel">取消</button>
+            <button class="btn btn-primary" id="sf-save">保存并服务端解析</button>
+          </div>
+        `);
+
+        const syncKindUI = () => {
+          const kind = $('#sf-kind').value;
+          $('#sf-url-box').classList.toggle('hidden', kind !== 'url');
+          $('#sf-content-box').classList.toggle('hidden', kind !== 'content');
+          $('#sf-manual-box').classList.toggle('hidden', kind !== 'manual');
+        };
+        $('#sf-kind').addEventListener('change', syncKindUI);
+        $('#sf-cancel').addEventListener('click', closeModal);
+        $('#sf-close-x').addEventListener('click', closeModal);
+        $('#sf-save').addEventListener('click', async () => {
+          const name = $('#sf-name').value.trim();
+          const kind = $('#sf-kind').value;
+          if (!name) return toast('请填写节点池名称', 'error');
+          const body = { name, scope: 'shared', kind, enabled: true, resolve_now: true };
+          if (kind === 'url') body.url = $('#sf-url').value.trim();
+          if (kind === 'content') body.content = $('#sf-content').value;
+          if (kind === 'manual') body.manual_text = $('#sf-manual').value;
+          try {
+            const res = await api('/v1/admin/sources', { method: 'POST', body });
+            closeModal();
+            if (res.last_error) {
+              toast(`已保存源，但初次拉取失败：${res.last_error}`, 'error');
+            } else {
+              toast(`节点池创建成功，解析出 ${res.node_count} 个可用节点`, 'ok');
+            }
+            loadSources();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        });
+      }
+
+      function openNodesPreviewModal(source) {
+        const nodes = source.nodes_preview || [];
+        const rows = nodes.length
+          ? nodes.map((n, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td style="font-weight:500;">${esc(n.name)}</td>
+                <td><span class="pill">${esc(n.type)}</span></td>
+                <td class="mono" style="font-size:12px;">${esc(n.server)}:${n.port}</td>
+              </tr>
+            `).join('')
+          : `<tr><td colspan="4"><div class="empty-state">暂无已解析节点，请点击「服务端拉取测试」。</div></td></tr>`;
+        openModal(`
+          <div class="modal-header">
+            <h3 class="modal-title">节点预览 · ${esc(source.name)} (${nodes.length} 个)</h3>
+            <button class="btn btn-ghost btn-sm" id="np-close-x">关闭</button>
+          </div>
+          <div class="modal-body" style="padding:0;">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>#</th><th>节点名称</th><th>协议</th><th>入口地址（仅管理员可见）</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer"><button class="btn btn-default" id="np-close">关闭</button></div>
+        `, { large: true });
+        $('#np-close-x').addEventListener('click', closeModal);
+        $('#np-close').addEventListener('click', closeModal);
+      }
+
+      $('#sources-tbody').addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-sact]');
+        if (!btn) return;
+        const id = btn.dataset.id;
+        const act = btn.dataset.sact;
+        const src = state.sources.find((s) => s.id === id);
+        if (!src) return;
+
+        if (act === 'preview') return openNodesPreviewModal(src);
+        if (act === 'refresh') {
+          btn.disabled = true;
+          btn.textContent = '拉取中…';
+          try {
+            const res = await api(`/v1/admin/sources/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+            toast(`拉取成功：共 ${res.node_count} 个可用节点`, 'ok');
+            loadSources();
+          } catch (err) {
+            toast(`拉取失败：${err.message}`, 'error');
+            loadSources();
+          }
+          return;
+        }
+        if (act === 'toggle') {
+          try {
+            await api(`/v1/admin/sources/${encodeURIComponent(id)}`, {
+              method: 'PATCH',
+              body: { enabled: !src.enabled },
+            });
+            toast(src.enabled ? '已停用该上游池' : '已启用该上游池', 'ok');
+            loadSources();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          return;
+        }
+        if (act === 'delete') {
+          if (!confirm(`确认删除共享节点池「${src.name}」吗？所有已分配该池的客户将同步移除这些节点。`)) return;
+          try {
+            await api(`/v1/admin/sources/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            toast('节点池已删除', 'ok');
+            loadSources();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        }
+      });
+
+      // --- Isolation Policy Tab ---
+      async function loadPolicy() {
+        try {
+          const data = await api('/v1/admin/isolation-policy');
+          state.policy = data;
+          const p = data.policy || {};
+          const prefsCount = Object.keys(p.hardening_prefs || {}).length;
+          const riskDomains = Object.values(p.risk_probe_groups || {}).reduce((acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0);
+          $('#policy-summary-kpis').innerHTML = `
+            <div class="kpi-card"><div class="kpi-label">当前版本</div><div class="kpi-value signal" style="font-size:15px;">${esc(data.version)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">默认隔离等级</div><div class="kpi-value" style="font-size:16px;">${esc(p.default_tier || 'strict')}</div></div>
+            <div class="kpi-card"><div class="kpi-label">WebRTC 策略</div><div class="kpi-value" style="font-size:16px;">${esc(p.default_webrtc_policy || 'block')}</div></div>
+            <div class="kpi-card"><div class="kpi-label">加固参数项</div><div class="kpi-value">${prefsCount}</div></div>
+            <div class="kpi-card"><div class="kpi-label">风控探测域名</div><div class="kpi-value">${riskDomains}</div></div>
+          `;
+          $('#policy-version-input').value = data.version || '';
+          $('#policy-sha-readonly').value = data.sha256 || '';
+          $('#policy-json-editor').value = JSON.stringify(p, null, 2);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      $('#format-policy-btn').addEventListener('click', () => {
+        try {
+          const parsed = JSON.parse($('#policy-json-editor').value);
+          $('#policy-json-editor').value = JSON.stringify(parsed, null, 2);
+        } catch (err) {
+          toast('JSON 格式错误：' + err.message, 'error');
+        }
+      });
+
+      $('#save-policy-btn').addEventListener('click', async () => {
+        let parsed;
+        try {
+          parsed = JSON.parse($('#policy-json-editor').value);
+        } catch (err) {
+          return toast('JSON 格式无效：' + err.message, 'error');
+        }
+        try {
+          const version = $('#policy-version-input').value.trim() || null;
+          const res = await api('/v1/admin/isolation-policy', {
+            method: 'PUT',
+            body: { version, policy: parsed },
+          });
+          toast(`策略 ${res.version} 发布成功`, 'ok');
+          loadPolicy();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+
+      // --- Audit Logs Tab ---
+      async function loadAuditLogs() {
+        try {
+          const action = $('#audit-action-filter').value;
+          const qs = new URLSearchParams({ limit: '150' });
+          if (action) qs.set('action', action);
+          const res = await api('/v1/admin/audit-logs?' + qs.toString());
+          state.auditLogs = res.logs || [];
+          const tbody = $('#audit-tbody');
+          if (!state.auditLogs.length) {
+            tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">暂无审计日志记录。</div></td></tr>`;
+            return;
+          }
+          tbody.innerHTML = state.auditLogs.map((log) => `
+            <tr>
+              <td style="font-size:12px;white-space:nowrap;">${esc(fmtDate(log.created_at))}</td>
+              <td class="mono" style="font-size:12px;">${esc(log.actor)}</td>
+              <td><span class="pill ${log.action.includes('denied') || log.action.includes('failed') ? 'pill-danger' : 'pill-signal'}">${esc(log.action)}</span></td>
+              <td class="mono" style="font-size:12px;">${esc(log.target_id || '—')}</td>
+              <td class="mono" style="font-size:12px;color:var(--ink-faint);">${esc(log.ip || '—')}</td>
+              <td class="mono" style="font-size:11px;color:var(--ink-dim);max-width:340px;word-break:break-all;">${esc(log.detail ? JSON.stringify(log.detail) : '—')}</td>
+            </tr>
+          `).join('');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }
+
+      // --- Toolbar & Auth Events ---
+      $$('#tenant-status-tabs .filter-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          $$('#tenant-status-tabs .filter-tab').forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+          state.statusFilter = tab.dataset.status;
+          loadTenantsAndOverview();
+        });
+      });
+      let searchTimer = null;
+      $('#tenant-search').addEventListener('input', (e) => {
+        state.search = e.target.value;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadTenantsAndOverview, 220);
+      });
+      $('#refresh-tenants-btn').addEventListener('click', loadTenantsAndOverview);
+      $('#open-create-tenant-btn').addEventListener('click', () => openTenantFormModal(null));
+      $('#refresh-sources-btn').addEventListener('click', loadSources);
+      $('#open-create-source-btn').addEventListener('click', openCreateSourceModal);
+      $('#reload-policy-btn').addEventListener('click', loadPolicy);
+      $('#refresh-audit-btn').addEventListener('click', loadAuditLogs);
+      $('#audit-action-filter').addEventListener('change', loadAuditLogs);
+
+      $('#login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = $('#login-submit-btn');
+        btn.disabled = true;
+        try {
+          await api('/v1/admin/login', {
+            method: 'POST',
+            body: { token: $('#admin-token-input').value },
+          });
+          $('#admin-token-input').value = '';
+          showApp();
+          loadTenantsAndOverview();
+          toast('登录成功', 'ok');
+        } catch (err) {
+          showLogin(err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      $('#logout-btn').addEventListener('click', async () => {
+        try {
+          await api('/v1/admin/logout', { method: 'POST' });
+        } catch {}
+        showLogin('');
+      });
+
+      function syncAdminThemeButton() {
+        const btn = $('#admin-theme-toggle');
+        if (!btn) return;
+        const isDark = (document.documentElement.dataset.theme || 'dark') === 'dark';
+        btn.textContent = isDark ? '冰瓷浅色' : '曜石暗黑';
+      }
+      const themeToggleBtn = $('#admin-theme-toggle');
+      if (themeToggleBtn) {
+        syncAdminThemeButton();
+        themeToggleBtn.addEventListener('click', () => {
+          const next = (document.documentElement.dataset.theme || 'dark') === 'dark' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = next;
+          document.documentElement.style.colorScheme = next;
+          try { localStorage.setItem('prism.admin.theme', next); } catch {}
+          syncAdminThemeButton();
+        });
+      }
+
+      // --- Bootstrap ---
+      async function boot() {
+        try {
+          const sess = await api('/v1/admin/session');
+          state.authRequired = Boolean(sess.auth_required);
+          if (sess.authenticated) {
+            showApp();
+            loadTenantsAndOverview();
+          } else {
+            showLogin('');
+          }
+        } catch (err) {
+          showLogin(err.message);
+        }
+      }
+      boot();
+    })();
+  </script>
+</body>
+</html>

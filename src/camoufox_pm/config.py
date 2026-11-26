@@ -4,9 +4,9 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -19,32 +19,33 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     api_key: str | None = None
+    desktop_token: str | None = None
     db_path: str = "data/profiles.db"
     secret_key: str | None = None
     webui_dir: str | None = None
-    # Lifetime of a login session. Sessions are stored server-side, so shortening
-    # this takes effect for existing sessions on their next request.
-    session_ttl_hours: int = 168
-    # Force the Secure flag on the session cookie. The flag is set automatically
-    # when the request itself arrived over HTTPS, but behind a TLS-terminating
-    # proxy the app sees plain HTTP — set this there.
-    secure_cookies: bool = False
+    # Cloud delivery service configuration (optional; can also be managed via UI).
+    cloud_url: str | None = None
+    cloud_token: str | None = None
+    cloud_allow_local: bool = False
+    # Distribution edition & customer branding controls.
+    client_edition: Literal["standard", "customer"] = "standard"
+    brand_name: str = "棱镜浏览器"
+    require_activation: bool = False
     # How long a profile lease survives without a heartbeat, in seconds. The
-    # heartbeat renews every 30s while a browser is open, so this is really the
-    # window in which an instance that died without releasing anything keeps
-    # its profiles locked to the rest of the fleet.
+    # heartbeat renews every 30s while a browser is open.
     lease_ttl: int = 120
-    backup_interval_hours: int = Field(default=24, ge=1)
-    backup_retention: int = Field(default=7, ge=1)
+
+    @field_validator("client_edition", mode="before")
+    @classmethod
+    def _normalize_client_edition(cls, value: object) -> object:
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            return cleaned or "standard"
+        return value
 
     @field_validator("lease_ttl")
     @classmethod
     def _lease_ttl_outlives_the_heartbeat(cls, value: int) -> int:
-        # Two heartbeat intervals. At or below one, a lease expires while the
-        # instance holding it is still renewing: the browser keeps running and
-        # another instance is free to open the same profile, which is the exact
-        # failure the lease exists to prevent. Zero or negative would disable
-        # mutual exclusion outright, and silently.
         if value < 60:
             raise ValueError(
                 "CPM_LEASE_TTL must be at least 60 seconds (the heartbeat renews every 30s)"

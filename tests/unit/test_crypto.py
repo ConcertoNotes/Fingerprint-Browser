@@ -14,7 +14,8 @@ def test_roundtrip_with_key(monkeypatch):
     assert crypto.decrypt(token) == "secret-pass"
 
 
-def test_identity_without_key(monkeypatch):
+def test_identity_without_key(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CPM_SECRET_KEY", raising=False)
     get_settings.cache_clear()
     assert crypto.encrypt("x") == "x"

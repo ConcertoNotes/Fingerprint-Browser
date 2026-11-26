@@ -14,7 +14,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from camoufox_pm.config import get_settings
-from camoufox_pm.core import browser_session, proxy_check
+from camoufox_pm.core import proxy_check
 from camoufox_pm.core.network_adapter import NetworkLaunchError
 from camoufox_pm.core.network_binding import NetworkBindings
 from camoufox_pm.core.network_catalog import NetworkCatalog
@@ -28,45 +28,21 @@ from tests.support.network_fixtures import (
 pytestmark = [pytest.mark.mihomo, pytest.mark.asyncio]
 
 
-class FakeContext:
-    def __init__(self):
-        self.handlers = {}
-
-    def on(self, event, handler):
-        self.handlers[event] = handler
-
-    async def new_page(self):
-        raise AssertionError("not used")
-
-
-class FakeCamoufox:
-    launches: list[dict] = []
-
-    def __init__(self, **options):
-        self.options = options
-        self.closed = False
-
-    async def start(self):
-        FakeCamoufox.launches.append(self.options)
-        return FakeContext()
-
-    async def __aexit__(self, *args):
-        self.closed = True
-
-
 @pytest.fixture
 async def world(profile_manager, tmp_path, monkeypatch):
     require_mihomo()
     monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
     get_settings.cache_clear()
-    FakeCamoufox.launches = []
-    monkeypatch.setattr(browser_session, "AsyncCamoufox", FakeCamoufox)
-    monkeypatch.setattr(browser_session, "CAMOUFOX_AVAILABLE", True)
     monkeypatch.setattr(
         proxy_check,
         "locate",
         lambda ip: proxy_check.ProxyLocation(
-            ip=ip, country="JP", timezone="Asia/Tokyo", latitude=35.69, longitude=139.69
+            ip=ip,
+            country="JP",
+            city="Tokyo",
+            timezone="Asia/Tokyo",
+            latitude=35.69,
+            longitude=139.69,
         ),
     )
     upstreams = [
@@ -113,19 +89,19 @@ async def test_two_profiles_run_through_their_own_nodes_and_ports(world):
     manager = world["manager"]
     a = await bound_profile(world, "A", "node-0")
     b = await bound_profile(world, "B", "node-1")
-    await manager.launch_browser(a.id)
-    await manager.launch_browser(b.id)
+    payload_a = await manager.prepare_session(a.id, include_proxy_secrets=True)
+    payload_b = await manager.prepare_session(b.id, include_proxy_secrets=True)
     run_a, run_b = manager.network.runtimes[a.id], manager.network.runtimes[b.id]
     assert (run_a.exit_ip, run_b.exit_ip) == ("198.51.100.10", "198.51.100.20")
     assert run_a.listener.port != run_b.listener.port
     assert run_a.engine.process.pid != run_b.engine.process.pid
-    options_a, options_b = FakeCamoufox.launches
-    # The browser gets the profile's own authenticated loopback listener...
-    assert options_a["proxy"]["server"] == f"http://127.0.0.1:{run_a.listener.port}"
-    assert options_a["proxy"]["username"] and options_a["proxy"]["password"]
-    assert options_a["proxy"] != options_b["proxy"]
-    # ...and Camoufox derives geography from the exit measured through it.
-    assert options_a["geoip"] == "198.51.100.10" and options_b["geoip"] == "198.51.100.20"
+    # The embedded session gets the profile's own authenticated loopback listener...
+    assert payload_a["proxy"]["server"] == f"http://127.0.0.1:{run_a.listener.port}"
+    assert payload_a["proxy"]["username"] and payload_a["proxy"]["password"]
+    assert payload_a["proxy"] != payload_b["proxy"]
+    # ...and reports the exit IP & GeoIP city measured through it.
+    assert payload_a["exit_ip"] == "198.51.100.10" and payload_b["exit_ip"] == "198.51.100.20"
+    assert payload_a["exit_city"] == "Tokyo"
     assert (await exit_through(run_a.proxy_config), await exit_through(run_b.proxy_config)) == (
         "198.51.100.10",
         "198.51.100.20",
@@ -136,7 +112,8 @@ async def test_two_profiles_run_through_their_own_nodes_and_ports(world):
         await exit_through(crossed)
     # A second launch of A is the same instance, not a second engine.
     again = await manager.launch_browser(a.id)
-    assert again["status"] == "already_running" and len(FakeCamoufox.launches) == 2
+    assert again["status"] == "already_running"
+    assert manager.network.runtimes[a.id].engine.process.pid == run_a.engine.process.pid
 
 
 async def test_engine_death_fails_closed_for_that_profile_only_and_reconnects(world):
@@ -168,7 +145,7 @@ async def test_a_dead_node_stops_the_launch_and_leaves_nothing_behind(world):
     with pytest.raises(NetworkLaunchError) as error:
         await manager.launch_browser(c.id)
     assert error.value.status == 502
-    assert FakeCamoufox.launches == []  # no browser ever started
+    assert not manager.browser_sessions.is_running(c.id)
     assert c.id not in manager.network.runtimes
     lease = await manager.storage.get_lease(c.id)
     assert lease is None or lease[0] is None  # the launch handed its lease back
@@ -217,7 +194,7 @@ async def test_a_retired_node_is_refused_instead_of_replaced(world):
     with pytest.raises(NetworkLaunchError) as error:
         await manager.launch_browser(a.id)
     assert (error.value.status, error.value.code) == (422, "node_retired")
-    assert FakeCamoufox.launches == [] and mihomo_children() == []
+    assert not manager.browser_sessions.is_running(a.id) and mihomo_children() == []
 
 
 async def test_unbound_profiles_keep_their_manual_proxy(world):
@@ -227,9 +204,8 @@ async def test_unbound_profiles_keep_their_manual_proxy(world):
         generate_fingerprint=False,
         proxy_config={"type": "socks5", "server": f"127.0.0.1:{world['upstreams'][0].proxy_port}"},
     )
-    await manager.launch_browser(profile.id)
-    (options,) = FakeCamoufox.launches
-    assert options["proxy"]["server"] == f"socks5://127.0.0.1:{world['upstreams'][0].proxy_port}"
+    payload = await manager.prepare_session(profile.id, include_proxy_secrets=True)
+    assert payload["proxy"]["server"] == f"socks5://127.0.0.1:{world['upstreams'][0].proxy_port}"
     assert profile.id not in manager.network.runtimes
     assert mihomo_children() == []
 

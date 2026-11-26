@@ -1,6 +1,5 @@
-"""Data models for the Camoufox profile management system."""
+"""Data models for Prism Browser."""
 
-import re
 import secrets
 import string
 import unicodedata
@@ -8,25 +7,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 # Characters used for short IDs, excluding visually confusing ones (0, o, 1, l, i).
 _ID_ALPHABET = "".join(c for c in (string.ascii_lowercase + string.digits) if c not in "0o1li")
 
 
 def generate_short_id(length: int = 8) -> str:
-    """Generate a short, readable ID.
-
-    Every character is random, drawn from an alphabet without visually confusing
-    characters (0/o, 1/l/i), which gives 31**8 ≈ 8.5e11 possible IDs at the
-    default length.
-
-    This used to derive most of the ID from a microsecond timestamp and leave
-    only two random characters. IDs minted in the same microsecond — which is
-    what a bulk Excel import does — then had just 961 possible values, and
-    because profiles are stored with INSERT OR REPLACE keyed on the ID, a
-    collision silently overwrote an existing profile.
-    """
+    """Generate a short, readable random ID."""
     return "".join(secrets.choice(_ID_ALPHABET) for _ in range(length))
 
 
@@ -37,11 +25,6 @@ def generate_profile_id() -> str:
 
 def generate_group_id() -> str:
     """Generate a short ID for a group."""
-    return generate_short_id(8)
-
-
-def generate_schedule_id() -> str:
-    """Generate a short ID for a schedule."""
     return generate_short_id(8)
 
 
@@ -64,8 +47,6 @@ class ProxyType(str, Enum):
 
     @classmethod
     def _missing_(cls, value):
-        # Persist the existing canonical values so older databases and managers
-        # never encounter a new enum merely because an import used an alias.
         return (
             {"socks4a": cls.SOCKS4, "socks5h": cls.SOCKS5}.get(value)
             if isinstance(value, str)
@@ -76,10 +57,10 @@ class ProxyType(str, Enum):
 class WebRTCMode(str, Enum):
     """WebRTC IP spoofing mode."""
 
-    FORWARD = "forward"  # Forward the real IP
-    REPLACE = "replace"  # Replace with the proxy IP
-    REAL = "real"  # Use the real IP
-    NONE = "none"  # Disable WebRTC
+    FORWARD = "forward"
+    REPLACE = "replace"
+    REAL = "real"
+    NONE = "none"
 
 
 class ProxyConfig(BaseModel):
@@ -115,53 +96,35 @@ class ProxyConfig(BaseModel):
 
 
 class BrowserSettings(BaseModel):
-    """Browser fingerprint and behaviour settings.
+    """Browser fingerprint and behaviour settings."""
 
-    High-level fields (os, screen, languages, fonts) are handed to Camoufox,
-    which generates a consistent fingerprint. Only explicit overrides that
-    Camoufox cannot derive on its own are emitted via :meth:`to_camoufox_config`.
-    """
-
-    # Browser chrome only; fingerprint and privacy settings remain independent.
     browser_ui: Literal["desktop", "camoufox"] = "desktop"
 
-    # Base settings
-    os: str = "windows"  # windows, linux, macos
+    os: str = "windows"
     screen: str = "1920x1080"
     user_agent: str | None = None
-    languages: list[str] = ["en-US", "en"]
+    languages: list[str] = Field(default_factory=lambda: ["en-US", "en"])
     timezone: str | None = None
     locale: str | None = None
 
-    # Browser window size
     window_width: int | None = 1280
     window_height: int | None = 720
 
-    # Geolocation
     geolocation: dict[str, float] | None = None
 
-    # WebRTC
     webrtc_mode: WebRTCMode = WebRTCMode.REPLACE
     webrtc_public_ip: str | None = None
     webrtc_local_ips: list[str] | None = None
 
-    # Device characteristics
     hardware_concurrency: int | None = None
     device_memory: int | None = None
     max_touch_points: int = 0
 
-    # Fingerprint noise preferences. Camoufox applies canvas/WebGL/audio spoofing
-    # itself; these flags are stored intent and are not forwarded as config keys.
     canvas_noise: bool = True
     webgl_noise: bool = True
     audio_noise: bool = True
-
-    # Make the canvas reproducible across launches instead of randomised per
-    # session. Off by default: it trades cross-site unlinkability for a canvas
-    # that behaves like real hardware. See to_camoufox_launch_options().
     stable_canvas: bool = False
 
-    # Fonts
     fonts: list[str] | None = None
 
     def has_geography(self) -> bool:
@@ -169,14 +132,7 @@ class BrowserSettings(BaseModel):
         return bool(self.timezone or self.geolocation)
 
     def clear_geography(self) -> bool:
-        """Drop the stated location so the proxy's exit address supplies it again.
-
-        Only the two fields Camoufox derives from that address. Languages and
-        locale are left alone: they are not geography — Camoufox applies them
-        after its IP lookup regardless, and an English browser is unremarkable
-        from any country — so clearing them would change the profile's identity
-        rather than free it to follow the proxy.
-        """
+        """Drop the stated location so the proxy's exit address supplies it again."""
         if not self.has_geography():
             return False
         self.timezone = None
@@ -184,12 +140,7 @@ class BrowserSettings(BaseModel):
         return True
 
     def to_camoufox_config(self) -> dict[str, Any]:
-        """Build Camoufox ``config`` property overrides.
-
-        Only values Camoufox does not derive itself are included; the browser's
-        own generator owns user-agent, WebGL, canvas and audio to keep the
-        fingerprint internally consistent.
-        """
+        """Build Camoufox ``config`` property overrides."""
         config: dict[str, Any] = {"disableTheming": self.browser_ui == "desktop"}
         if self.browser_ui == "desktop":
             config["showcursor"] = False
@@ -204,22 +155,16 @@ class BrowserSettings(BaseModel):
             config["navigator.hardwareConcurrency"] = self.hardware_concurrency
         if self.max_touch_points:
             config["navigator.maxTouchPoints"] = self.max_touch_points
-        # webrtc_local_ips is intentionally not emitted. The webrtc:localipv4 key
-        # does exist, but setting it replaces the mDNS candidate a real Firefox
-        # sends with a literal address. Leaving it alone keeps the real behaviour.
         if self.webrtc_public_ip:
             config["webrtc:ipv4"] = self.webrtc_public_ip
         return config
 
 
-# What a finding means, defined here because both the live check and the record
-# kept on a profile carry one — two definitions would be two types for the same
-# value in the same API response.
 Level = Literal["error", "warning", "info"]
 
 
 class ProxyCheckFinding(BaseModel):
-    """One thing worth telling the user about this proxy and this profile."""
+    """One finding from checking a profile's proxy."""
 
     level: Level
     field: str
@@ -227,13 +172,7 @@ class ProxyCheckFinding(BaseModel):
 
 
 class ProxyCheckRecord(BaseModel):
-    """The last answer a profile's proxy gave, kept so the list can show it.
-
-    Deliberately smaller than the live check: no coordinates, because the list
-    shows where the proxy comes out, not where on the map. Whether the dot is
-    green, amber or red is derived from `reachable` and the findings rather than
-    stored, so an old row cannot disagree with the rules that read it.
-    """
+    """Last proxy check answer stored on a profile."""
 
     checked_at: datetime
     reachable: bool
@@ -289,21 +228,17 @@ class Profile(BaseModel):
     storage_path: str | None = None
     notes: str | None = None
 
-    # The machine this profile pretends to be, resolved once on first launch and
-    # replayed from then on so the profile does not look like new hardware every
-    # session. See core/fingerprint_store.py for what is frozen and what is not.
     fingerprint: dict[str, Any] | None = None
+    isolation_config: dict[str, Any] | None = None
+    fingerprint_hash: str | None = None
+    ip_drift_guard: bool = True
+    last_exit_ip: str | None = None
+    last_exit_country: str | None = None
+    last_exit_at: datetime | None = None
+    cloud_revision: int = 0
+    cloud_synced_at: datetime | None = None
 
-    # The last time this profile's proxy was checked, so the list can show it
-    # without checking again. Cleared when the proxy changes: an answer from the
-    # old proxy says nothing about the new one.
     proxy_check: ProxyCheckRecord | None = None
-
-    # Optimistic-concurrency counter, bumped by every version-checked save. A
-    # caller reads a profile, edits it, and writes back against the version it
-    # read; a save that landed in between makes the write fail loudly instead of
-    # reverting it. Storage bookkeeping rather than profile data, but the API
-    # exposes it so a client editing a form can pass back the version it loaded.
     row_version: int = 0
 
     def get_storage_path(self, base_path: str = "data/profiles") -> str:
@@ -313,11 +248,7 @@ class Profile(BaseModel):
         return self.storage_path
 
     def to_camoufox_launch_options(self) -> dict[str, Any]:
-        """Build the keyword arguments passed to ``AsyncCamoufox``.
-
-        Passes high-level constraints and lets Camoufox generate the fingerprint;
-        does not inject a manual user-agent or WebGL renderer.
-        """
+        """Build legacy keyword arguments for ``AsyncCamoufox``."""
         bs = self.browser_settings
         options: dict[str, Any] = {
             "os": bs.os,
@@ -327,23 +258,11 @@ class Profile(BaseModel):
             "persistent_context": True,
             "humanize": True,
             "i_know_what_im_doing": True,
-            # Let Camoufox derive geo/timezone from the proxy IP unless we set coordinates.
             "geoip": not bool(bs.geolocation),
         }
-        # "none" fully disables WebRTC; other modes use Camoufox's default handling
-        # (which reports the proxy's public IP when a proxy is set).
         if bs.webrtc_mode == WebRTCMode.NONE:
             options["block_webrtc"] = True
         if bs.stable_canvas:
-            # Firefox's baseline fingerprinting protection randomises canvas image
-            # export (toDataURL/toBlob, 2D and WebGL) per site and per session.
-            # Turning it off makes the canvas reproducible, which is what a
-            # long-lived profile needs, together with the pinned font list.
-            # Camoufox 0.5.8 no longer emits canvas or glyph-spacing noise seeds.
-            #
-            # The cost is deliberate: the canvas is then identical across sites,
-            # exactly as real hardware behaves, so it can be correlated between
-            # them. That is why this is per profile and off by default.
             options["firefox_user_prefs"] = {
                 "privacy.baselineFingerprintingProtection": False,
             }
@@ -373,7 +292,7 @@ class UsageStats(BaseModel):
     profile_id: str
     action: str
     timestamp: datetime = Field(default_factory=datetime.now)
-    duration: int | None = None  # seconds
+    duration: int | None = None
     success: bool = True
     details: dict[str, Any] | None = None
 
@@ -383,7 +302,7 @@ class ProxyTestResult(BaseModel):
 
     proxy_id: str
     success: bool
-    response_time: int | None = None  # milliseconds
+    response_time: int | None = None
     error_message: str | None = None
     ip_address: str | None = None
     country: str | None = None
@@ -394,105 +313,16 @@ class SystemStatus(BaseModel):
     """System status snapshot."""
 
     total_profiles: int
-    active_profiles: int
+    active_profiles: int = 0
     running_browsers: int
     total_groups: int
-    system_load: float
-    memory_usage: float
-    disk_usage: float
-    uptime_seconds: int
-
-
-class ScheduleAction(str, Enum):
-    """What a schedule does to its profile when it fires.
-
-    Deliberately absent: regenerating the hardware fingerprint. The pinned
-    machine exists so a profile stays the same computer between sessions;
-    swapping its GPU, screen and cores on a timer would hand a warmed-up
-    account new hardware overnight — the one thing the pin prevents. Hardware
-    regeneration stays a manual action (reset-fingerprint), which warns about
-    the cost. REFRESH_BROWSER is the honest scheduled rotation: it moves only
-    the browser version, which is what a real machine does when it updates.
-    """
-
-    LAUNCH = "launch"
-    REFRESH_BROWSER = "refresh_browser"
-
-
-class ScheduleKind(str, Enum):
-    """How a schedule's fire times are expressed."""
-
-    INTERVAL = "interval"  # every N minutes
-    DAILY = "daily"  # at HH:MM on the chosen weekdays
-
-
-class ScheduleRunOutcome(str, Enum):
-    """How one firing of a schedule ended."""
-
-    OK = "ok"
-    SKIPPED = "skipped"  # e.g. the browser was already running
-    ERROR = "error"
-    MISSED = "missed"  # fell due while the process was down; not replayed
-
-
-_TIME_OF_DAY = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-
-
-class Schedule(BaseModel):
-    """A recurring task against one profile.
-
-    ``at_time`` is read on the server's own clock: this is a single-process
-    tool that runs next to its browsers, so "09:00" means 09:00 where the
-    process runs, with no timezone bookkeeping to get wrong. ``days`` uses
-    Python's weekday numbering, 0 = Monday … 6 = Sunday; empty means every day.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
-
-    id: str = Field(default_factory=generate_schedule_id)
-    actor_kind: Literal["session", "system", "legacy_api_key", "anonymous_local"] = "system"
-    actor_username: str | None = None
-    actor_user_id: str | None = None
-    profile_id: str
-    action: ScheduleAction
-    kind: ScheduleKind
-    interval_minutes: int | None = Field(None, ge=1)
-    at_time: str | None = None
-    days: list[int] | None = None
-    # Launch schedules only: close the browser this long after opening it, so a
-    # warming session ends by itself instead of staying open until the next run
-    # finds it and skips.
-    run_minutes: int | None = Field(None, ge=1)
-    enabled: bool = True
-    next_run_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
-
-    @model_validator(mode="after")
-    def _expression_is_complete(self) -> "Schedule":
-        if self.kind == ScheduleKind.INTERVAL:
-            if not self.interval_minutes:
-                raise ValueError("An interval schedule needs interval_minutes")
-        else:
-            if not self.at_time or not _TIME_OF_DAY.match(self.at_time):
-                raise ValueError("A daily schedule needs at_time as HH:MM (24-hour)")
-        if self.days is not None:
-            if any(day < 0 or day > 6 for day in self.days):
-                raise ValueError("days entries are weekdays, 0 (Monday) to 6 (Sunday)")
-            self.days = sorted(set(self.days)) or None
-        if self.action == ScheduleAction.REFRESH_BROWSER and self.run_minutes:
-            raise ValueError("run_minutes only applies to launch schedules")
-        return self
-
-
-class ScheduleRun(BaseModel):
-    """The record of one firing of a schedule."""
-
-    id: int | None = None
-    schedule_id: str
-    started_at: datetime = Field(default_factory=datetime.now)
-    finished_at: datetime | None = None
-    outcome: ScheduleRunOutcome
-    message: str | None = None
-
-    model_config = ConfigDict(use_enum_values=True)
+    cpu_percent: float = 0.0
+    memory_used_mb: float = 0.0
+    memory_total_mb: float = 0.0
+    memory_percent: float = 0.0
+    mihomo_available: bool = False
+    mihomo_version: str | None = None
+    cloud_policy_source: str = "builtin"
+    cloud_policy_version: str = ""
+    browser_installed: bool = False
+    uptime_seconds: int = 0

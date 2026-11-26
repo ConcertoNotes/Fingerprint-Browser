@@ -1,0 +1,76 @@
+appId: com.prismbrowser.desktop
+productName: 棱镜浏览器
+copyright: Copyright © 2026 Prism Browser
+asar: true
+compression: maximum
+
+directories:
+  output: ../dist
+
+files:
+  - "main.js"
+  - "preload-shell.js"
+  - "sidecar.js"
+  - "workspace-manager.js"
+  - "fingerprint-cdp.js"
+  - "omnibox.js"
+  - "error-page.js"
+  - "cookies.js"
+  - "package.json"
+  - "!tests/**"
+  - "!**/*.test.js"
+
+extraResources:
+  - from: "../build/prism-backend"
+    to: "backend"
+    filter:
+      - "**/*"
+  - from: "../.cache/bundle-runtime/${platform}-${arch}"
+    to: "runtime"
+    filter:
+      - "**/*"
+  - from: "../build/distribution"
+    to: "distribution"
+    filter:
+      - "**/*"
+
+mac:
+  category: public.app-category.productivity
+  icon: ../packaging/prism-browser.icns
+  identity: null
+  target:
+    - dmg
+  artifactName: prism-browser-macos-${arch}.${ext}
+
+dmg:
+  title: 棱镜浏览器
+  artifactName: prism-browser-macos-${arch}.dmg
+
+win:
+  icon: ../packaging/prism-browser.ico
+  target:
+    - nsis
+  artifactName: prism-browser-windows-${arch}-setup.${ext}
+
+nsis:
+  artifactName: prism-browser-windows-${arch}-setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  language: "2052"
+  installerLanguages:
+    - zh_CN
+    - en_US
+  displayLanguageSelector: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 棱镜浏览器
+
+linux:
+  icon: ../packaging/prism-browser.png
+  category: Network
+  synopsis: Prism Browser (棱镜浏览器) — isolated desktop browser workspace
+  target:
+    - deb
+    - tar.gz
+  artifactName: prism-browser-linux-${arch}.${ext}

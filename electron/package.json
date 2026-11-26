@@ -1,0 +1,23 @@
+{
+  "name": "prism-browser-desktop",
+  "version": "0.6.0",
+  "description": "Prism Browser (棱镜浏览器) — Isolated Single-Window Desktop Browser",
+  "author": "Prism Browser",
+  "license": "MIT",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.js",
+    "test:electron": "electron tests/smoke-electron.js",
+    "pack": "electron-builder --config electron-builder.yml --dir",
+    "dist": "electron-builder --config electron-builder.yml",
+    "dist:mac": "electron-builder --config electron-builder.yml --mac",
+    "dist:win": "electron-builder --config electron-builder.yml --win",
+    "dist:linux": "electron-builder --config electron-builder.yml --linux"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

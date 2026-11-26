@@ -40,6 +40,10 @@ def test_generated_config_is_loopback_only_authenticated_and_fail_closed():
     assert config["allow-lan"] is False and config["bind-address"] == "127.0.0.1"
     assert config["rules"] == ["MATCH,REJECT"]
     assert config["dns"]["enhanced-mode"] == "redir-host"
+    assert config["dns"]["nameserver"] == [
+        "https://1.1.1.1/dns-query#node-0",
+        "https://8.8.8.8/dns-query#node-0",
+    ]
     assert "fake-ip-range" not in config["dns"] and config["profile"]["store-fake-ip"] is False
     for key in ("external-controller", "mixed-port", "port", "socks-port", "proxy-groups"):
         assert key not in config

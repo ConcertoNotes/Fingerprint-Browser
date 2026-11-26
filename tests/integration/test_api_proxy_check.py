@@ -153,6 +153,7 @@ async def test_a_working_proxy_the_database_cannot_place(client, monkeypatch):
     assert body["location"] == {
         "ip": "203.0.113.7",
         "country": None,
+        "city": None,
         "timezone": None,
         "latitude": None,
         "longitude": None,

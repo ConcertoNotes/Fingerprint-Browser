@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from camoufox_pm.config import get_settings
 
-from .crypto import decrypt, encrypt
+from .crypto import decrypt, decrypt_with_salt, encrypt
 from .network_subscription import (
     ParsedSubscription,
     SubscriptionError,
@@ -37,6 +38,10 @@ _ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 
 class NetworkSecretsUnavailable(RuntimeError):
     """Node and subscription secrets must never be stored or used in clear text."""
+
+
+class CloudManagedReadOnly(PermissionError):
+    """Cloud-managed subscriptions and nodes cannot be edited or deleted locally."""
 
 
 class NetworkNotFound(LookupError):
@@ -115,10 +120,13 @@ _NODE_SELECT = """
 SELECT n.id, n.subscription_id, n.display_name, n.protocol, n.entry, n.status,
        n.invalid_reason, n.position, n.created_at, n.updated_at, n.retired_at,
        s.name AS subscription_name,
+       s.managed_by AS subscription_managed_by,
+       s.source_kind AS subscription_source_kind,
        c.health, c.exit_ip, c.country_iso, c.city, c.region, c.latitude, c.longitude,
        c.timezone, c.precision, c.location_source, c.latency_ms, c.error_code, c.error,
        c.checked_at,
        (SELECT COUNT(*) FROM profile_network_bindings b WHERE b.node_id = n.id) AS profile_count,
+       (SELECT GROUP_CONCAT(b.profile_id, ',') FROM profile_network_bindings b WHERE b.node_id = n.id) AS bound_profile_ids_csv,
        (SELECT COUNT(*) FROM network_node_checks o
           WHERE c.exit_ip IS NOT NULL AND o.exit_ip = c.exit_ip) AS shared_exit_count,
        i.data AS intel, i.checked_at AS intel_checked_at
@@ -131,19 +139,34 @@ LEFT JOIN network_ip_intel i ON i.ip = c.exit_ip
 
 def _node_public(row: Any) -> dict[str, Any]:
     intel = json.loads(row["intel"]) if row["intel"] else None
+    keys = row.keys()
+    raw_bound = row["bound_profile_ids_csv"] if "bound_profile_ids_csv" in keys else None
+    bound_profile_ids = [pid for pid in (raw_bound or "").split(",") if pid]
+    managed_by = (
+        row["subscription_managed_by"] if "subscription_managed_by" in keys else "local"
+    ) or "local"
+    is_cloud = managed_by == "cloud"
+    source_kind = row["subscription_source_kind"] if "subscription_source_kind" in keys else None
+    is_local_manual = (not is_cloud) and (source_kind == "manual")
     return {
         "id": row["id"],
         "subscription_id": row["subscription_id"],
         "subscription_name": row["subscription_name"],
+        "subscription_managed_by": managed_by,
         "name": row["display_name"],
-        "protocol": row["protocol"],
-        "entry": row["entry"],
+        "protocol": "protected" if is_cloud else row["protocol"],
+        "entry": None if is_cloud else row["entry"],
+        "credentials_protected": is_cloud,
+        "editable": False if is_cloud else is_local_manual,
+        "deletable": False if is_cloud else is_local_manual,
         "status": row["status"],
         "invalid_reason": row["invalid_reason"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "retired_at": row["retired_at"],
         "profile_count": row["profile_count"],
+        "bound_count": row["profile_count"],
+        "bound_profile_ids": bound_profile_ids,
         "shared_exit_count": row["shared_exit_count"],
         "check": _check_public(row),
         "intel": intel,
@@ -181,16 +204,28 @@ class NetworkCatalog:
             "ON n.id = b.node_id WHERE n.subscription_id = ?",
             (row["id"],),
         ).fetchone()[0]
+        keys = row.keys()
+        managed_by = (row["managed_by"] if "managed_by" in keys else "local") or "local"
+        is_cloud = managed_by == "cloud"
         return {
             "id": row["id"],
             "name": row["name"],
             "source_kind": row["source_kind"],
-            # Host only: the path and query of a subscription URL are its token.
+            # Host only for local URLs; cloud-managed subscriptions never reveal upstream origins.
             "source_display": (
-                f"https://{row['source_host']}/…" if row["source_host"] else row["source_file_name"]
+                "云端托管"
+                if is_cloud
+                else (
+                    f"https://{row['source_host']}/…"
+                    if row["source_host"]
+                    else row["source_file_name"]
+                )
             ),
-            "manual": row["source_kind"] == "manual",
-            "source_file_name": row["source_file_name"],
+            "manual": False if is_cloud else row["source_kind"] == "manual",
+            "readonly": is_cloud,
+            "managed_by": managed_by,
+            "cloud_source_id": row["cloud_source_id"] if "cloud_source_id" in keys else None,
+            "source_file_name": None if is_cloud else row["source_file_name"],
             "status": row["status"],
             "last_synced_at": row["last_synced_at"],
             "last_error_code": row["last_error_code"],
@@ -226,6 +261,8 @@ class NetworkCatalog:
         content: bytes | None = None,
         file_name: str | None = None,
         fetch=fetch_subscription,
+        _mask_entry: bool = False,
+        _seal_fn: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
         """Create from a URL or a file, importing it at once. Nothing is stored on failure."""
         if (url is None) == (content is None):
@@ -266,13 +303,29 @@ class NetworkCatalog:
                     stamp,
                 ),
             )
-            report = self._apply(subscription_id, parsed)
+            report = self._apply(
+                subscription_id,
+                parsed,
+                mask_entry=_mask_entry,
+                seal_fn=_seal_fn,
+            )
         return {"subscription": self.get_subscription(subscription_id), "report": report}
 
     async def sync_subscription(
-        self, subscription_id: str, *, content: bytes | None = None, fetch=fetch_subscription
+        self,
+        subscription_id: str,
+        *,
+        content: bytes | None = None,
+        fetch=fetch_subscription,
+        _allow_cloud: bool = False,
+        _mask_entry: bool = False,
+        _seal_fn: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
         row = self._subscription_row(subscription_id)
+        if not _allow_cloud and (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly(
+                "Cloud-managed subscriptions are synchronized through the cloud service."
+            )
         if row["source_kind"] == "manual":
             raise SubscriptionError(
                 "manual_group", "Manual node groups have no source to refresh; edit their nodes."
@@ -303,12 +356,48 @@ class NetworkCatalog:
             raise
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
-            report = self._apply(subscription_id, parsed)
+            report = self._apply(
+                subscription_id,
+                parsed,
+                mask_entry=_mask_entry,
+                seal_fn=_seal_fn,
+            )
         return {"subscription": self.get_subscription(subscription_id), "report": report}
 
-    def _apply(self, subscription_id: str, parsed: ParsedSubscription) -> dict[str, Any]:
+    def _unseal_config(self, value: str) -> str:
+        """Unseal either standard ``enc:`` or salted cloud ``enc2:`` node configuration."""
+        if not value or value == "revoked":
+            raise NetworkSecretsUnavailable(
+                "This cloud node's credentials have been revoked. Sync or re-activate your license."
+            )
+        if value.startswith("enc2:"):
+            from .cloud.entitlement import get_active_seal_salt
+
+            salt = get_active_seal_salt(self.connection)
+            if not salt:
+                raise NetworkSecretsUnavailable(
+                    "Cloud node decryption salt is unavailable. Please sync your cloud license."
+                )
+            try:
+                return decrypt_with_salt(value, salt)
+            except ValueError:
+                raise NetworkSecretsUnavailable(
+                    "Stored cloud node secrets could not be decrypted. Sync your cloud license "
+                    "or restore the original secret.key / CPM_SECRET_KEY."
+                ) from None
+        return unseal(value)
+
+    def _apply(
+        self,
+        subscription_id: str,
+        parsed: ParsedSubscription,
+        *,
+        mask_entry: bool = False,
+        seal_fn: Callable[[str], str] | None = None,
+    ) -> dict[str, Any]:
         """Merge a parsed document. Runs inside the caller's write transaction."""
         stamp = now()
+        effective_seal = seal_fn or seal
         existing = {
             row["node_key"]: row
             for row in self.connection.execute(
@@ -322,6 +411,7 @@ class NetworkCatalog:
         for position, node in enumerate(parsed.nodes):
             seen.add(node.key)
             config_json = json.dumps(node.config, sort_keys=True, ensure_ascii=False)
+            stored_entry = "" if mask_entry else node.entry
             status, reason = ("invalid", INFORMATIONAL) if node.informational else ("active", None)
             current = existing.get(node.key)
             if current is None:
@@ -335,8 +425,8 @@ class NetworkCatalog:
                         node.key,
                         node.name,
                         node.protocol,
-                        node.entry,
-                        seal(config_json),
+                        stored_entry,
+                        effective_seal(config_json),
                         status,
                         reason,
                         position,
@@ -346,17 +436,37 @@ class NetworkCatalog:
                 )
                 created += 1
                 continue
-            same_config = unseal(current["config_enc"]) == config_json
-            if same_config and current["status"] == status and current["position"] == position:
+            try:
+                existing_clear = self._unseal_config(current["config_enc"])
+                same_config = existing_clear == config_json
+            except NetworkSecretsUnavailable:
+                same_config = False
+            needs_reseal = seal_fn is not None and not str(current["config_enc"]).startswith(
+                "enc2:"
+            )
+            entry_changed = current["entry"] != stored_entry
+            if (
+                same_config
+                and not needs_reseal
+                and not entry_changed
+                and current["status"] == status
+                and current["position"] == position
+                and current["display_name"] == node.name
+            ):
                 unchanged += 1
                 continue
+            new_config_enc = (
+                current["config_enc"]
+                if (same_config and not needs_reseal)
+                else effective_seal(config_json)
+            )
             self.connection.execute(
                 "UPDATE network_nodes SET display_name=?, entry=?, config_enc=?, status=?, "
                 "invalid_reason=?, retired_at=NULL, position=?, updated_at=? WHERE id=?",
                 (
                     node.name,
-                    node.entry,
-                    current["config_enc"] if same_config else seal(config_json),
+                    stored_entry,
+                    new_config_enc,
                     status,
                     reason,
                     position,
@@ -440,6 +550,8 @@ class NetworkCatalog:
 
     def _manual_group(self, group_id: str):
         row = self._subscription_row(group_id)
+        if (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly("Cloud-managed subscriptions cannot be edited locally.")
         if row["source_kind"] != "manual":
             raise SubscriptionError("not_manual", "Nodes can only be added to manual node groups.")
         return row
@@ -517,13 +629,16 @@ class NetworkCatalog:
         from .network_subscription import node_key, validate_node
 
         row = self.connection.execute(
-            "SELECT n.id, n.subscription_id, n.protocol, n.config_enc, n.display_name, s.source_kind "
+            "SELECT n.id, n.subscription_id, n.protocol, n.config_enc, n.display_name, "
+            "s.source_kind, s.managed_by "
             "FROM network_nodes n JOIN network_subscriptions s ON s.id = n.subscription_id "
             "WHERE n.id = ?",
             (node_id,),
         ).fetchone()
         if row is None:
             raise NetworkNotFound("Node not found")
+        if (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly("Cloud-managed nodes cannot be edited locally.")
         if row["source_kind"] != "manual":
             raise SubscriptionError("not_manual", "Only manually added nodes can be edited.")
         config = json.loads(unseal(row["config_enc"]))
@@ -574,12 +689,14 @@ class NetworkCatalog:
 
     def delete_manual_node(self, node_id: str) -> None:
         row = self.connection.execute(
-            "SELECT s.source_kind FROM network_nodes n JOIN network_subscriptions s "
+            "SELECT s.source_kind, s.managed_by FROM network_nodes n JOIN network_subscriptions s "
             "ON s.id = n.subscription_id WHERE n.id = ?",
             (node_id,),
         ).fetchone()
         if row is None:
             raise NetworkNotFound("Node not found")
+        if (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly("Cloud-managed nodes cannot be deleted locally.")
         if row["source_kind"] != "manual":
             raise SubscriptionError(
                 "not_manual",
@@ -597,7 +714,9 @@ class NetworkCatalog:
     def rename_subscription(self, subscription_id: str, name: str, row_version: int) -> dict:
         from .database import StaleWriteError
 
-        self._subscription_row(subscription_id)
+        row = self._subscription_row(subscription_id)
+        if (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly("Cloud-managed subscriptions cannot be renamed locally.")
         name = " ".join(name.split())[:80]
         if not name:
             raise ValueError("A subscription needs a name")
@@ -611,9 +730,13 @@ class NetworkCatalog:
                 raise StaleWriteError(subscription_id, row_version)
         return self.get_subscription(subscription_id)
 
-    def delete_subscription(self, subscription_id: str, retire_bound: bool = False) -> dict:
+    def delete_subscription(
+        self, subscription_id: str, retire_bound: bool = False, *, _allow_cloud: bool = False
+    ) -> dict:
         """Delete outright when nothing is bound; otherwise only on request, by retiring."""
-        self._subscription_row(subscription_id)
+        row = self._subscription_row(subscription_id)
+        if not _allow_cloud and (row["managed_by"] or "local") == "cloud":
+            raise CloudManagedReadOnly("Cloud-managed subscriptions cannot be deleted locally.")
         stamp = now()
         with self.connection:
             # Counted under the write lock: a binding made after the count could
@@ -718,7 +841,7 @@ class NetworkCatalog:
         ).fetchone()
         if row is None:
             raise NetworkNotFound("Node not found")
-        outbound = json.loads(unseal(row["config_enc"]))
+        outbound = json.loads(self._unseal_config(row["config_enc"]))
         outbound["type"] = row["protocol"]
         return self.get_node(node_id), outbound
 
@@ -801,11 +924,14 @@ class NetworkCatalog:
                     {
                         "node_id": node["id"],
                         "subscription_id": node["subscription_id"],
+                        "subscription_managed_by": node["subscription_managed_by"],
                         "label": node["name"],
                         "status": node["status"],
                         "health": check["health"] if check else "unknown",
                         "country_iso": check["country_iso"] if check else None,
                         "exit_ip": check["exit_ip"] if check else None,
+                        "bound_count": node["bound_count"],
+                        "bound_profile_ids": node["bound_profile_ids"],
                     }
                 )
                 continue
@@ -823,6 +949,7 @@ class NetworkCatalog:
                         "label": node["name"],
                         "subscription_id": node["subscription_id"],
                         "subscription_name": node["subscription_name"],
+                        "subscription_managed_by": node["subscription_managed_by"],
                         "protocol": node["protocol"],
                         "status": node["status"],
                         "country_iso": check["country_iso"],
@@ -837,6 +964,8 @@ class NetworkCatalog:
                         "checked_at": check["checked_at"],
                         "stale": check["stale"],
                         "profile_count": node["profile_count"],
+                        "bound_count": node["bound_count"],
+                        "bound_profile_ids": node["bound_profile_ids"],
                         "shared_exit_count": node["shared_exit_count"],
                         "purity_score": composite.get("purity_score"),
                         "risk_score": composite.get("risk_score"),

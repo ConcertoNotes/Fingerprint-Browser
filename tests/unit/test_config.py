@@ -22,6 +22,16 @@ def test_api_key_from_env(monkeypatch):
     assert s.api_key == "secret"
 
 
+def test_cloud_settings_from_env(monkeypatch):
+    monkeypatch.setenv("CPM_CLOUD_URL", "https://cloud.lulu.example")
+    monkeypatch.setenv("CPM_CLOUD_TOKEN", "tok-123")
+    monkeypatch.setenv("CPM_CLOUD_ALLOW_LOCAL", "1")
+    s = Settings(_env_file=None)
+    assert s.cloud_url == "https://cloud.lulu.example"
+    assert s.cloud_token == "tok-123"
+    assert s.cloud_allow_local is True
+
+
 def test_the_reported_version_matches_the_package_metadata():
     """A release means editing pyproject.toml, and a second hardcoded copy is the
     one that gets forgotten: a wheel built as 0.2.0 reported 0.1.1 through

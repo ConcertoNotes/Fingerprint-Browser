@@ -3,22 +3,15 @@
 import json
 
 import pytest
-from cryptography.fernet import Fernet
 
 from camoufox_pm.api.dependencies import get_profile_manager
-from camoufox_pm.config import get_settings
 from camoufox_pm.core.models import Profile, ProxyConfig
 from tests.support.proxy_protocols import certificates, proxy_fixture
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias,canonical", [("socks4a", "socks4"), ("socks5h", "socks5")])
-async def test_aliases_stay_canonical_in_library_and_profile_database(client, alias, canonical):
-    library = await client.post(
-        "/api/v1/proxies",
-        json={"name": "Alias proxy", "type": alias, "server": "proxy.example:1080"},
-    )
-    assert library.status_code == 201 and library.json()["data"]["type"] == canonical
+async def test_aliases_stay_canonical_in_profile_database(client, alias, canonical):
     profile = await client.post(
         "/api/v1/profiles",
         json={
@@ -54,9 +47,6 @@ async def test_unsupported_auth_cannot_be_saved_or_echoed(client, protocol, user
         "username": username,
         "password": password,
     }
-    library = await client.post("/api/v1/proxies", json={"name": "Invalid", **proxy})
-    assert library.status_code == 422
-    assert "private-user" not in library.text and "private-password" not in library.text
     created = await client.post(
         "/api/v1/profiles",
         json={"name": "Invalid", "generate_fingerprint": False, "proxy_config": proxy},
@@ -67,9 +57,7 @@ async def test_unsupported_auth_cannot_be_saved_or_echoed(client, protocol, user
 
 
 @pytest.mark.asyncio
-async def test_socks4_health_check_returns_safe_reachable_result_on_both_routes(
-    client, tmp_path, monkeypatch
-):
+async def test_socks4_health_check_returns_safe_reachable_result(client, tmp_path, monkeypatch):
     from camoufox_pm.core import proxy_check
 
     certs = certificates(tmp_path)
@@ -80,14 +68,7 @@ async def test_socks4_health_check_returns_safe_reachable_result_on_both_routes(
             proxy_check, "IP_ENDPOINTS", (f"https://cpm-origin.invalid:{fixture.https_port}/ip",)
         )
         proxy = {"type": "socks4a", "server": f"127.0.0.1:{fixture.proxy_port}"}
-        entry = (
-            await client.post("/api/v1/proxies", json={"name": "Test SOCKS4", **proxy})
-        ).json()["data"]
         for prefix in ("/api", "/api/v1"):
-            response = await client.post(f"{prefix}/proxies/{entry['id']}/check")
-            assert (
-                response.status_code == 200 and response.json()["data"]["last_check"]["reachable"]
-            )
             unsaved = await client.post(f"{prefix}/proxy/check", json={"proxy_config": proxy})
             assert unsaved.status_code == 200 and unsaved.json()["reachable"]
 
@@ -112,33 +93,3 @@ async def test_old_unsupported_profile_is_readable_and_reports_a_block_without_l
     assert "Use SOCKS5" in checked.text and "private-password" not in checked.text
     with pytest.raises(ValueError, match="SOCKS4 username/password"):
         profile.to_camoufox_launch_options()
-
-
-@pytest.mark.asyncio
-async def test_explicitly_clearing_socks_credentials_does_not_require_a_lost_key(
-    client, monkeypatch
-):
-    monkeypatch.setenv("CPM_SECRET_KEY", Fernet.generate_key().decode())
-    get_settings.cache_clear()
-    try:
-        entry = (
-            await client.post(
-                "/api/v1/proxies",
-                json={
-                    "name": "Recover",
-                    "type": "socks5",
-                    "server": "proxy.example:1080",
-                    "username": "u",
-                    "password": "p",
-                },
-            )
-        ).json()["data"]
-        monkeypatch.delenv("CPM_SECRET_KEY")
-        get_settings.cache_clear()
-        cleared = await client.patch(
-            f"/api/v1/proxies/{entry['id']}",
-            json={"row_version": 0, "username": None, "password": None},
-        )
-        assert cleared.status_code == 200 and not cleared.json()["data"]["has_password"]
-    finally:
-        get_settings.cache_clear()

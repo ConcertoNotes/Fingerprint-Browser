@@ -10,43 +10,28 @@ const placeholders = (text: string) => [...new Set(text.match(/\{\w+\}/g) ?? [])
 test('the manager defaults to Simplified Chinese and keeps a saved choice', () => {
   assert.equal(resolveLocale('en'), 'en')
   assert.equal(resolveLocale('zh-CN'), 'zh-CN')
-  assert.equal(resolveLocale('ru'), 'ru')
+  assert.equal(resolveLocale('ru'), 'zh-CN')
   assert.equal(resolveLocale(null), 'zh-CN')
   assert.equal(resolveLocale('unsupported'), 'zh-CN')
 })
 
 test('English and unknown diagnostics fall back to their original text', () => {
-  assert.equal(translate('en', 'New profile'), 'New profile')
-  assert.equal(translate('zh-CN', 'New profile'), '新建配置')
+  assert.equal(translate('en', 'New browser'), 'New browser')
+  assert.equal(translate('zh-CN', 'New browser'), '新建浏览器')
   assert.equal(translate('zh-CN', 'An upstream diagnostic'), 'An upstream diagnostic')
   assert.equal(translate('zh-CN', 'constructor'), 'constructor')
-  assert.equal(translate('ru', 'New profile'), 'Новый профиль')
-  assert.equal(translate('ru', 'An upstream diagnostic'), 'An upstream diagnostic')
-  assert.equal(translate('ru', '__proto__'), '__proto__')
+  assert.equal(translate('zh-CN', '__proto__'), '__proto__')
 })
 
 test('interpolation preserves user text literally and replaces repeated values', () => {
   assert.equal(translate('zh-CN', 'Edit {name}', { name: '$& <name> {count}' }), '编辑 $& <name> {count}')
   assert.equal(translate('en', '{count} / {count}', { count: 0 }), '0 / 0')
   assert.equal(translate('zh-CN', 'Edit {name}'), '编辑 {name}')
-  assert.equal(translate('ru', 'Edit {name}', { name: '$& <name> {count}' }), 'Изменить $& <name> {count}')
-})
-
-test('Russian counts use grammatical forms including teens, zero and fractions', () => {
-  for (const [count, suffix] of [[1, 'профиль'], [2, 'профиля'], [5, 'профилей'], [0, 'профилей'], [11, 'профилей'], [14, 'профилей'], [21, 'профиль'], [22, 'профиля'], [101, 'профиль'], [1.5, 'профиля']] as const) {
-    assert.equal(translate('ru', 'Create {count} profiles', { count }), `Создать ${count} ${suffix}`)
-  }
-  assert.equal(translate('ru', 'Create {count} profiles'), 'Создать {count} профиля')
 })
 
 for (const [locale, catalog] of Object.entries(catalogs)) {
   test(`${locale}: coverage, nonempty values and placeholders match the source`, () => {
-    assert.deepEqual(Object.keys(catalog).sort(), Object.keys(catalogs['zh-CN']).sort())
     for (const [source, entry] of Object.entries(catalog)) {
-      if (typeof entry !== 'string' && locale === 'ru') {
-        assert.deepEqual(Object.keys(entry).sort(), ['few', 'many', 'one', 'other'])
-        assert.ok(source.includes('{count}'), `Plural without count: ${source}`)
-      }
       for (const translation of typeof entry === 'string' ? [entry] : Object.values(entry)) {
         assert.ok(translation?.trim(), `Empty ${locale} translation: ${source}`)
         assert.deepEqual(placeholders(translation), placeholders(source), `${locale}: ${source}`)
@@ -82,7 +67,9 @@ test('every literal translation call has entries in every supported catalog', ()
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 't') {
         const key = node.arguments[0]
         if (key && ts.isStringLiteralLike(key)) {
-          for (const [locale, catalog] of Object.entries(catalogs)) assert.ok(Object.hasOwn(catalog, key.text), `${locale} ${file}: ${key.text}`)
+          for (const [locale, catalog] of Object.entries(catalogs)) {
+            assert.ok(Object.hasOwn(catalog, key.text), `${locale} ${file}: ${key.text}`)
+          }
         }
       }
       ts.forEachChild(node, visit)
@@ -92,7 +79,23 @@ test('every literal translation call has entries in every supported catalog', ()
 })
 
 test('visible JSX text uses translations except for product names and technical units', () => {
-  const allowed = new Set(['Camoufox', 'English', 'Windows', 'macOS', 'Linux', 'HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5', 'WebRTC', 'Canvas', 'ms', 'KB ·'])
+  const allowed = new Set([
+    'PRISM',
+    'Prism',
+    'English',
+    'Windows',
+    'macOS',
+    'Linux',
+    'HTTP',
+    'HTTPS',
+    'SOCKS5',
+    'WebRTC',
+    'Canvas',
+    'ms',
+    'GB',
+    'SHA',
+    'rev',
+  ])
   const sourceRoot = join(process.cwd(), 'src')
   const files = readdirSync(sourceRoot, { recursive: true }) as string[]
   for (const file of files.filter(file => file.endsWith('.tsx'))) {

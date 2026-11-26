@@ -6,8 +6,7 @@ import ssl
 import pytest
 
 from camoufox_pm.core import proxy_check
-from camoufox_pm.core.models import BrowserSettings, ProxyConfig, ProxyType
-from camoufox_pm.core.proxy_import import parse_proxy_import
+from camoufox_pm.core.models import BrowserSettings, ProxyConfig
 from camoufox_pm.core.socks_relay import SocksRelay
 from tests.support.proxy_protocols import certificates, proxy_fixture
 
@@ -144,21 +143,6 @@ async def test_socks4_credentials_have_a_safe_actionable_error_without_connectin
     )
     assert not result.reachable and "Use SOCKS5" in result.error
     assert "private-user" not in str(result) and "private-password" not in str(result)
-
-
-def test_aliases_are_canonical_and_preserve_percent_encoded_credentials():
-    values = parse_proxy_import(
-        "socks5h://us%40er:pa%3Ass@proxy.example:1080\nsocks4a://proxy.example:1081"
-    )
-    assert (
-        values[0][1].type is ProxyType.SOCKS5
-        and values[0][1].username == "us@er"
-        and values[0][1].password == "pa:ss"
-    )
-    assert values[1][1].type is ProxyType.SOCKS4
-    assert [value.model_dump(mode="json")["type"] for _, value in values] == ["socks5", "socks4"]
-    with pytest.raises(ValueError, match="SOCKS4 username/password"):
-        parse_proxy_import("socks4a://private-user:private-password@proxy.example:1080")
 
 
 @pytest.mark.asyncio

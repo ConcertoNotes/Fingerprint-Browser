@@ -1,16 +1,20 @@
 import { translate, type Locale, type Translator } from './i18n'
-import { translateProxyDiagnostic } from './diagnostics'
 
-// API client for the 噜噜指纹浏览器 backend.
+// API client for the Prism Browser (棱镜浏览器) backend.
 //
 // The UI is served by the API on the same origin, so the base URL is empty by
 // default; NEXT_PUBLIC_API_URL overrides it for split deployments.
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
-// Canonical API prefix. The backend still serves the unversioned /api paths as
-// aliases for older scripts; the bundled UI always talks to the current one.
 const API_PREFIX = '/api/v1'
+
+export type IsolationOs = 'macos' | 'windows' | 'linux'
+export type IsolationTier = 'strict' | 'standard'
+export type WebRtcPolicy = 'block' | 'spoof_exit'
+export type CanvasPolicy = 'stable_hardware' | 'session_noise'
+export type LocaleMode = 'fixed' | 'follow_exit'
+export type TimezoneMode = 'fixed' | 'follow_exit'
 
 export interface BrowserSettings {
   browser_ui?: 'desktop' | 'camoufox'
@@ -22,22 +26,111 @@ export interface BrowserSettings {
   locale?: string | null
   window_width?: number | null
   window_height?: number | null
-  geolocation?: {
-    lat?: number
-    lon?: number
-    latitude?: number
-    longitude?: number
-    accuracy?: number
-  } | null
   hardware_concurrency?: number | null
   device_memory?: number | null
   max_touch_points?: number
   webrtc_mode?: string
-  /** Keep the canvas reproducible across launches, at the cost of cross-site unlinkability. */
   stable_canvas?: boolean
   canvas_noise?: boolean
   webgl_noise?: boolean
   audio_noise?: boolean
+}
+
+export interface ProfileIsolation {
+  isolation_version?: number
+  policy_version: string
+  tier: IsolationTier
+  os: IsolationOs
+  preset_id?: string | null
+  webrtc_policy: WebRtcPolicy
+  canvas_policy: CanvasPolicy
+  locale_mode: LocaleMode
+  languages: string[]
+  timezone_mode?: TimezoneMode
+  timezone?: string | null
+  install_webrtc_guard?: boolean
+  window_size?: [number, number] | number[]
+  pinned_fingerprint?: Record<string, unknown>
+  fingerprint_hash: string
+}
+
+export interface IsolationCreateInput {
+  os: IsolationOs
+  tier?: IsolationTier
+  preset_id?: string | null
+  webrtc_policy?: WebRtcPolicy
+  canvas_policy?: CanvasPolicy
+  locale_mode?: LocaleMode
+  languages?: string[]
+  timezone_mode?: TimezoneMode
+  timezone?: string | null
+  install_webrtc_guard?: boolean
+  window_size?: [number, number]
+}
+
+export interface IsolationSummary {
+  fingerprint_hash: string
+  os: string
+  tier: IsolationTier
+  policy_version: string
+  policy_outdated?: boolean
+  screen?: string | null
+  gpu?: string | null
+  hardware_concurrency?: number | null
+  user_agent?: string | null
+  browser_major?: number | null
+  installed_major?: number | null
+  browser_outdated?: boolean
+  webrtc_policy?: WebRtcPolicy
+  canvas_policy?: CanvasPolicy
+  locale_mode?: LocaleMode
+  languages?: string[]
+  timezone_mode?: TimezoneMode
+  timezone?: string | null
+  install_webrtc_guard?: boolean
+  preset_id?: string | null
+}
+
+export interface IsolationPreview {
+  isolation: ProfileIsolation
+  summary: IsolationSummary
+  policy_source?: string
+  policy_version?: string
+  available_unused_presets?: number
+  total_presets?: number
+}
+
+export interface IsolationAuditCheck {
+  key: string
+  title: string
+  status: 'pass' | 'warn' | 'fail'
+  summary: string
+  detail?: string | null
+  action?: string | null
+}
+
+export interface IsolationAuditReport {
+  profile_id: string
+  score: number
+  status: 'healthy' | 'warning' | 'critical' | 'ok' | 'warn' | 'fail'
+  checked_at: string
+  checks: IsolationAuditCheck[]
+}
+
+export interface FingerprintSummary {
+  user_agent?: string | null
+  platform?: string | null
+  hardware_concurrency?: number | null
+  screen?: string | null
+  gpu?: string | null
+  font_count?: number | null
+  property_count?: number
+  browser_major?: number | null
+  installed_major?: number | null
+  browser_outdated?: boolean
+  pinned_os?: string | null
+  settings_os?: string | null
+  os_mismatch?: boolean
 }
 
 export interface ProxyConfig {
@@ -48,32 +141,8 @@ export interface ProxyConfig {
   country?: string | null
 }
 
-/** A short description of the machine a profile is pinned to. */
-export interface FingerprintSummary {
-  user_agent?: string | null
-  platform?: string | null
-  hardware_concurrency?: number | null
-  screen?: string | null
-  gpu?: string | null
-  font_count?: number | null
-  property_count?: number
-  /** Firefox major version this pin claims. */
-  browser_major?: number | null
-  /** Firefox major version of the browser on disk. */
-  installed_major?: number | null
-  /** The pin claims an older browser than the one installed. */
-  browser_outdated?: boolean
-  /** The OS the pinned machine itself reports. */
-  pinned_os?: string | null
-  /** The OS the profile's settings ask for. */
-  settings_os?: string | null
-  /** The setting names one operating system and the pinned machine another. */
-  os_mismatch?: boolean
-}
-
 export interface Profile {
   id: string
-  permissions?: { view: boolean; edit: boolean; launch: boolean; export: boolean }
   name: string
   group?: string | null
   tags?: string[]
@@ -86,13 +155,56 @@ export interface Profile {
   updated_at?: string
   last_used?: string | null
   fingerprint?: FingerprintSummary | null
-  /** Null until the proxy is checked, and again whenever the proxy changes. */
-  proxy_check?: ProxyCheckRecord | null
-  /**
-   * Bumped by every save. Sent back with an edit so that a save someone else
-   * landed in the meantime is refused rather than silently overwritten.
-   */
+  isolation?: ProfileIsolation | null
+  isolation_summary?: IsolationSummary | null
+  fingerprint_hash?: string | null
+  ip_drift_guard?: boolean
+  last_exit_ip?: string | null
+  last_exit_country?: string | null
+  last_exit_at?: string | null
+  cloud_revision?: number
+  cloud_synced_at?: string | null
   row_version: number
+}
+
+export interface ExitIpDriftDetail {
+  previous_ip: string | null
+  previous_country: string | null
+  current_ip: string | null
+  current_country: string | null
+  country_changed: boolean
+}
+
+export interface IsolatedTerminalResult {
+  profile_id: string
+  isolated_home: string
+  timezone: string
+  exit_ip: string | null
+  exit_country: string | null
+  proxy_port: number
+  launched: boolean
+  platform: string
+}
+
+export interface RiskDomainProbeItem {
+  domain: string
+  category: string
+  reachable: boolean
+  status_code: number | null
+  latency_ms: number | null
+  error: string | null
+}
+
+export interface RiskDomainProbeReport {
+  node_id: string
+  exit_ip: string | null
+  checked_at: string
+  total_enforced_domains: number
+  total_enforced_cidrs: number
+  risk_probe_groups: Record<string, string[]>
+  risk_probe_cidrs: string[]
+  probes: RiskDomainProbeItem[]
+  summary: { ok: number; total: number }
 }
 
 export interface ProfilesResponse {
@@ -112,57 +224,149 @@ export interface Group {
   profile_count: number
 }
 
+export type ClientEdition = 'standard' | 'customer'
+
+export type EntitlementStatus =
+  | 'none'
+  | 'active'
+  | 'expiring_soon'
+  | 'expired'
+  | 'disabled'
+  | 'revoked'
+  | 'device_limit'
+  | 'offline_grace_exceeded'
+  | string
+
 export interface SystemStatus {
   total_profiles: number
-  active_profiles: number
+  active_profiles?: number
   running_browsers: number
   total_groups: number
-  system_load: number
-  memory_usage: number
-  disk_usage: number
+  cpu_percent: number
+  memory_used_mb: number
+  memory_total_mb: number
+  memory_percent: number
+  mihomo_available: boolean
+  mihomo_version?: string | null
+  cloud_policy_source?: string | null
+  cloud_policy_version?: string | null
+  browser_installed?: boolean
   uptime_seconds: number
+  client_edition?: ClientEdition
+  brand_name?: string
+  require_activation?: boolean
+  entitlement_status?: EntitlementStatus
+  entitlement_tenant_name?: string | null
+  entitlement_expires_at?: string | null
+  entitlement_days_remaining?: number | null
+  // Fallback legacy fields
+  memory_usage?: number
+  disk_usage?: number
 }
 
-/**
- * A failed request, carrying enough to act on rather than only to display.
- *
- * The status and the API's own error code are what let a caller tell apart the
- * conflicts that share 409 — someone else saved this profile, versus someone
- * else is running it — and do something better than showing the message.
- */
+export interface SystemConfig {
+  version: string
+  host: string
+  port: number
+  database_path: string
+  api_key_set: boolean
+  encryption_enabled: boolean
+  cors_origins: string[]
+  camoufox_available: boolean
+  uptime_seconds: number
+  host_os?: IsolationOs
+}
+
+export interface BrowserReadiness {
+  installed: boolean
+  bundled?: boolean
+  version: string | null
+  state: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
+  progress: number | null
+  message: string
+  error: string | null
+}
+
+export interface DevicePreset {
+  id: string
+  os: string
+  screen?: string | null
+  hardware_concurrency?: number | null
+  gpu?: string | null
+  vendor?: string | null
+  user_agent?: string | null
+  fingerprint_hash?: string | null
+  in_use?: boolean
+}
+
+export interface BulkTagsResult {
+  updated: Profile[]
+  skipped: { id: string; reason: string }[]
+}
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly details?: unknown,
   ) {
     super(message)
     this.name = 'ApiRequestError'
   }
 }
 
-/** The profile was saved by someone else since this client last read it. */
 export function isStaleWrite(error: unknown): boolean {
   return error instanceof ApiRequestError && error.status === 409 && error.code === 'stale_write'
 }
 
+export function readExitIpDrift(error: unknown): ExitIpDriftDetail | null {
+  if (!error || typeof error !== 'object') {
+    return null
+  }
+  const err = error as { status?: unknown; code?: unknown; details?: unknown }
+  if (err.status !== 409 || err.code !== 'exit_ip_drift') {
+    return null
+  }
+  const raw = Array.isArray(err.details) ? err.details[0] : err.details
+  if (!raw || typeof raw !== 'object') {
+    return {
+      previous_ip: null,
+      previous_country: null,
+      current_ip: null,
+      current_country: null,
+      country_changed: false,
+    }
+  }
+  const record = raw as Record<string, unknown>
+  return {
+    previous_ip: typeof record.previous_ip === 'string' ? record.previous_ip : null,
+    previous_country: typeof record.previous_country === 'string' ? record.previous_country : null,
+    current_ip: typeof record.current_ip === 'string' ? record.current_ip : null,
+    current_country: typeof record.current_country === 'string' ? record.current_country : null,
+    country_changed: Boolean(record.country_changed),
+  }
+}
+
 const API_KEY_STORAGE = 'camoufox-pm.api-key'
 
-/** The key CPM_API_KEY expects, if the user has stored one. */
 export function getApiKey(): string {
   if (typeof window === 'undefined') return ''
   try {
     return window.localStorage.getItem(API_KEY_STORAGE) ?? ''
   } catch {
-    // Cookie/local authentication remains usable when browser storage is blocked.
     return ''
   }
 }
 
 export function setApiKey(key: string): void {
   if (typeof window === 'undefined') return
-  if (key) window.localStorage.setItem(API_KEY_STORAGE, key)
-  else window.localStorage.removeItem(API_KEY_STORAGE)
+  try {
+    if (key) window.localStorage.setItem(API_KEY_STORAGE, key)
+    else window.localStorage.removeItem(API_KEY_STORAGE)
+  } catch {
+    // Embedded storage may be disabled.
+  }
 }
 
 export function authHeaders(): Record<string, string> {
@@ -171,13 +375,33 @@ export function authHeaders(): Record<string, string> {
 }
 
 export function notifyAccessDenied(status: number): void {
-  if ((status === 401 || status === 403) && typeof window !== 'undefined') window.dispatchEvent(new Event('camoufox-access-denied'))
+  if ((status === 401 || status === 403) && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('camoufox-access-denied'))
+  }
+}
+
+/** Notify the bottom status bar and sidebar badges to refresh immediately. */
+export function emitStatusRefresh(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('cpm-status-refresh'))
+  }
+}
+
+export function unwrapEnvelope<T>(body: unknown): T {
+  if (
+    body !== null &&
+    typeof body === 'object' &&
+    'data' in body &&
+    ('success' in body || Object.keys(body as Record<string, unknown>).length <= 3)
+  ) {
+    const wrapped = (body as { data: T | undefined }).data
+    if (wrapped !== undefined) return wrapped
+  }
+  return body as T
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    // Spread options first: putting it last let a caller's `headers` replace the
-    // merged object, silently dropping Content-Type and the API key.
     ...options,
     headers: {
       ...(typeof FormData !== 'undefined' && options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
@@ -186,26 +410,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    if (!path.includes('/auth/')) notifyAccessDenied(response.status)
+    notifyAccessDenied(response.status)
     let detail = response.statusText
     let code: string | undefined
+    let details: unknown
     try {
       const body = await response.json()
-      // Every API error carries error.message; detail is the legacy mirror,
-      // kept as a fallback for anything not yet on the one error shape.
       const raw = body.error?.message ?? body.detail ?? body.message ?? detail
       detail = typeof raw === 'string' ? raw : JSON.stringify(raw)
-      code = body.error?.code
+      code = body.error?.code ?? body.code
+      details = body.error?.details ?? body.details
     } catch {
       // response had no JSON body
     }
-    throw new ApiRequestError(detail, response.status, code)
+    throw new ApiRequestError(detail, response.status, code, details)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
-/** Shared client for feature modules; preserves cookie/key auth and API errors. */
 export const apiRequest = request
 
 function toQuery(params: Record<string, unknown>): string {
@@ -217,235 +440,166 @@ function toQuery(params: Record<string, unknown>): string {
   return query.toString() ? `?${query.toString()}` : ''
 }
 
-export interface ProxyLocation {
-  ip: string
-  country: string | null
-  timezone: string | null
-  latitude: number | null
-  longitude: number | null
-}
-
-export interface ProxyFinding {
-  level: 'error' | 'warning' | 'info'
-  field: string
-  message: string
-}
-
-export interface ProxyCheck {
-  reachable: boolean
-  error: string | null
-  latency_ms: number | null
-  location: ProxyLocation | null
-  findings: ProxyFinding[]
-  /** Null when checking a proxy that is not saved yet, which is recorded nowhere. */
-  checked_at: string | null
-}
-
-/** The last answer a profile's proxy gave, as the list shows it. */
-export interface ProxyCheckRecord {
-  checked_at: string
-  reachable: boolean
-  error: string | null
-  latency_ms: number | null
-  ip: string | null
-  country: string | null
-  timezone: string | null
-  findings: ProxyFinding[]
-}
-
-/** Saved library credentials are write-only; profiles receive an explicit snapshot. */
-export interface LibraryProxy {
-  id: string
-  name: string
-  type: string
-  server: string
-  username: string | null
-  country: string | null
-  has_password: boolean
-  row_version: number
-  last_check: ProxyCheckRecord | null
-  created_at: string
-  updated_at: string
-}
-
-export interface ProxyAssignmentResult {
-  assigned: string[]
-  skipped: { id: string; reason: string }[]
-}
-
-export interface ProxyImportResult {
-  created: LibraryProxy[]
-  skipped: { line: number; reason: string }[]
-}
-
-export const proxiesAPI = {
-  async list(): Promise<LibraryProxy[]> {
-    const body = await request<{ data: { proxies: LibraryProxy[] } }>(`${API_PREFIX}/proxies`)
-    return body.data.proxies
-  },
-  async create(data: Record<string, unknown>): Promise<LibraryProxy> {
-    const body = await request<{ data: LibraryProxy }>(`${API_PREFIX}/proxies`, { method: 'POST', body: JSON.stringify(data) })
-    return body.data
-  },
-  async update(id: string, data: Record<string, unknown>): Promise<LibraryProxy> {
-    const body = await request<{ data: LibraryProxy }>(`${API_PREFIX}/proxies/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
-    return body.data
-  },
-  remove(id: string, rowVersion: number): Promise<unknown> {
-    return request(`${API_PREFIX}/proxies/${id}?row_version=${rowVersion}`, { method: 'DELETE' })
-  },
-  async check(id: string): Promise<LibraryProxy> {
-    const body = await request<{ data: LibraryProxy }>(`${API_PREFIX}/proxies/${id}/check`, { method: 'POST' })
-    return body.data
-  },
-  async assign(proxy: LibraryProxy, profiles: Pick<Profile, 'id' | 'row_version'>[]): Promise<ProxyAssignmentResult> {
-    const body = await request<{ data: ProxyAssignmentResult }>(`${API_PREFIX}/proxies/${proxy.id}/assign`, { method: 'POST', body: JSON.stringify({ proxy_row_version: proxy.row_version, profiles: profiles.map(({ id, row_version }) => ({ id, row_version })) }) })
-    return body.data
-  },
-  async importText(text: string): Promise<ProxyImportResult> {
-    const body = await request<{ data: ProxyImportResult }>(`${API_PREFIX}/proxies/import`, { method: 'POST', body: JSON.stringify({ text }) })
-    return body.data
-  },
-}
-
-export interface ProfileViewConfig {
-  search: string
-  status: 'all' | 'active' | 'inactive' | 'blocked' | 'maintenance'
-  group: string | null
-  tags: string[]
-  sort_key: 'name' | 'id' | 'group' | 'os' | 'status' | 'last_used'
-  sort_direction: 'asc' | 'desc'
-}
-
-export interface SavedFilter {
-  id: string
-  name: string
-  config: ProfileViewConfig
-  row_version: number
-  created_at: string
-  updated_at: string
-}
-
-export const savedFiltersAPI = {
-  async list(): Promise<SavedFilter[]> {
-    const body = await request<{ data: { filters: SavedFilter[] } }>(`${API_PREFIX}/saved-filters`)
-    return body.data.filters
-  },
-  async create(name: string, config: ProfileViewConfig): Promise<SavedFilter> {
-    const body = await request<{ data: SavedFilter }>(`${API_PREFIX}/saved-filters`, { method: 'POST', body: JSON.stringify({ name, config }) })
-    return body.data
-  },
-  async update(view: SavedFilter, data: { name?: string; config?: ProfileViewConfig }): Promise<SavedFilter> {
-    const body = await request<{ data: SavedFilter }>(`${API_PREFIX}/saved-filters/${view.id}`, { method: 'PATCH', body: JSON.stringify({ ...data, row_version: view.row_version }) })
-    return body.data
-  },
-  remove(view: SavedFilter): Promise<unknown> {
-    return request(`${API_PREFIX}/saved-filters/${view.id}?row_version=${view.row_version}`, { method: 'DELETE' })
-  },
-}
-
-export interface BulkTagsResult {
-  updated: Profile[]
-  skipped: { id: string; reason: string }[]
-}
-
 export const profilesAPI = {
   async bulkTags(profiles: Profile[], add: string[], remove: string[]): Promise<BulkTagsResult> {
-    const body = await request<{ data: BulkTagsResult }>(`${API_PREFIX}/profiles/tags`, { method: 'POST', body: JSON.stringify({ profiles: profiles.map(({ id, row_version }) => ({ id, row_version })), add, remove }) })
-    return body.data
-  },
-  getProfiles(params: Record<string, unknown> = {}): Promise<ProfilesResponse> {
-    return request<ProfilesResponse>(`${API_PREFIX}/profiles${toQuery(params)}`)
-  },
-
-  getProfile(id: string): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}`)
+    const body = await request<unknown>(`${API_PREFIX}/profiles/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ profiles: profiles.map(({ id, row_version }) => ({ id, row_version })), add, remove }),
+    })
+    return unwrapEnvelope<BulkTagsResult>(body)
   },
 
-  createProfile(data: Record<string, unknown>): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles`, { method: 'POST', body: JSON.stringify(data) })
+  async getProfiles(params: Record<string, unknown> = {}): Promise<ProfilesResponse> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles${toQuery(params)}`)
+    return unwrapEnvelope<ProfilesResponse>(body)
   },
 
-  updateProfile(id: string, data: Record<string, unknown>): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+  async getProfile(id: string): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}`)
+    return unwrapEnvelope<Profile>(body)
   },
 
-  deleteProfile(id: string): Promise<void> {
-    return request<void>(`${API_PREFIX}/profiles/${id}`, { method: 'DELETE' })
+  async createProfile(data: {
+    name: string
+    group?: string | null
+    tags?: string[]
+    notes?: string | null
+    node_id?: string | null
+    ip_drift_guard?: boolean
+    isolation?: IsolationCreateInput
+  }): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    emitStatusRefresh()
+    return unwrapEnvelope<Profile>(body)
   },
 
-  cloneProfile(id: string, newName: string): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}/clone`, {
+  async updateProfile(id: string, data: Record<string, unknown>): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+    return unwrapEnvelope<Profile>(body)
+  },
+
+  async deleteProfile(id: string): Promise<void> {
+    await request<void>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    emitStatusRefresh()
+  },
+
+  async cloneProfile(id: string, newName: string): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/clone`, {
       method: 'POST',
       body: JSON.stringify({ new_name: newName }),
     })
+    emitStatusRefresh()
+    return unwrapEnvelope<Profile>(body)
   },
 
-  startProfile(id: string): Promise<unknown> {
-    return request<unknown>(`${API_PREFIX}/profiles/${id}/launch`, {
+  async launchProfile(id: string, options: { allow_ip_drift?: boolean; headless?: boolean } = {}): Promise<unknown> {
+    const res = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/launch`, {
       method: 'POST',
-      body: JSON.stringify({ headless: false }),
+      body: JSON.stringify({ headless: options.headless ?? false, allow_ip_drift: options.allow_ip_drift ?? false }),
     })
+    emitStatusRefresh()
+    return res
   },
 
-  closeProfile(id: string): Promise<unknown> {
-    return request<unknown>(`${API_PREFIX}/profiles/${id}/close`, { method: 'POST' })
+  async startProfile(id: string, options?: { allow_ip_drift?: boolean }): Promise<unknown> {
+    return profilesAPI.launchProfile(id, options)
   },
 
-  resetFingerprint(id: string): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}/reset-fingerprint`, { method: 'POST' })
+  async openTerminal(id: string): Promise<IsolatedTerminalResult> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/terminal`, {
+      method: 'POST',
+    })
+    return unwrapEnvelope<IsolatedTerminalResult>(body)
   },
 
-  refreshBrowserVersion(id: string): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}/refresh-browser`, { method: 'POST' })
+  async probeRiskDomains(id: string): Promise<RiskDomainProbeReport> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/probe-risk-domains`, {
+      method: 'POST',
+    })
+    return unwrapEnvelope<RiskDomainProbeReport>(body)
   },
 
-  /** keepMachine: move the OS setting to the pin. Otherwise: pin new hardware for the setting. */
-  reconcileOs(id: string, keepMachine: boolean): Promise<Profile> {
-    return request<Profile>(`${API_PREFIX}/profiles/${id}/reconcile-os`, {
+  async closeProfile(id: string): Promise<unknown> {
+    const res = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/close`, { method: 'POST' })
+    emitStatusRefresh()
+    return res
+  },
+
+  async isolationPreview(params: {
+    os?: IsolationOs
+    tier?: IsolationTier
+    preset_id?: string | null
+    exclude_preset_id?: string | null
+  } = {}): Promise<IsolationPreview> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/isolation/preview${toQuery(params)}`)
+    return unwrapEnvelope<IsolationPreview>(body)
+  },
+
+  async fingerprintPresets(os?: IsolationOs): Promise<DevicePreset[]> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/fingerprint-presets${toQuery({ os })}`)
+    const data = unwrapEnvelope<{ presets?: DevicePreset[] } | DevicePreset[]>(body)
+    return Array.isArray(data) ? data : (data.presets ?? [])
+  },
+
+  async auditProfile(id: string): Promise<IsolationAuditReport> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/audit`, {
+      method: 'POST',
+    })
+    return unwrapEnvelope<IsolationAuditReport>(body)
+  },
+
+  async reoptimizeProfile(id: string): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/reoptimize`, {
+      method: 'POST',
+    })
+    emitStatusRefresh()
+    return unwrapEnvelope<Profile>(body)
+  },
+
+  async refreshBrowserVersion(id: string): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/refresh-browser`, {
+      method: 'POST',
+    })
+    return unwrapEnvelope<Profile>(body)
+  },
+
+  async reconcileOs(id: string, keepMachine = false): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/reconcile-os`, {
       method: 'POST',
       body: JSON.stringify({ keep_machine: keepMachine }),
     })
+    return unwrapEnvelope<Profile>(body)
   },
 
-  // Takes a list because the profiles this exists for — created when every one
-  // was given a random region — are all of them at once.
-  clearGeography(ids: string[]): Promise<ClearGeographyResult> {
-    return request<ClearGeographyResult>(`${API_PREFIX}/profiles/clear-geography`, {
+  async resetFingerprint(id: string): Promise<Profile> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/${encodeURIComponent(id)}/reset-fingerprint`, {
+      method: 'POST',
+    })
+    return unwrapEnvelope<Profile>(body)
+  },
+
+  async clearGeography(ids: string[]): Promise<{ cleared: string[]; unchanged: string[]; not_found: string[] }> {
+    const body = await request<unknown>(`${API_PREFIX}/profiles/clear-geography`, {
       method: 'POST',
       body: JSON.stringify({ profile_ids: ids }),
     })
-  },
-
-  checkProxy(id: string): Promise<ProxyCheck> {
-    return request<ProxyCheck>(`${API_PREFIX}/profiles/${id}/check-proxy`, { method: 'POST' })
-  },
-
-  // The same check for a profile that is still being filled in, so the form can
-  // answer before anything is saved.
-  checkUnsavedProxy(body: {
-    proxy_config: Record<string, unknown> | null
-    browser_settings: Record<string, unknown>
-  }): Promise<ProxyCheck> {
-    return request<ProxyCheck>(`${API_PREFIX}/proxy/check`, { method: 'POST', body: JSON.stringify(body) })
-  },
-
-  async exportExcel(): Promise<Blob> {
-    const response = await fetch(`${API_BASE_URL}${API_PREFIX}/profiles/export/excel`, {
-      headers: authHeaders(),
-    })
-    if (!response.ok) { notifyAccessDenied(response.status); throw new ApiRequestError(response.statusText, response.status) }
-    return response.blob()
+    return unwrapEnvelope(body)
   },
 
   async exportArchive(id: string): Promise<Blob> {
-    const response = await fetch(`${API_BASE_URL}${API_PREFIX}/profiles/${id}/export`, {
+    const response = await fetch(`${API_BASE_URL}${API_PREFIX}/profiles/${encodeURIComponent(id)}/export`, {
       headers: authHeaders(),
     })
     if (!response.ok) {
       notifyAccessDenied(response.status)
       const body = await response.json().catch(() => null)
-      throw new Error(body?.detail ?? response.statusText)
+      throw new Error(body?.detail ?? body?.error?.message ?? response.statusText)
     }
     return response.blob()
   },
@@ -453,7 +607,6 @@ export const profilesAPI = {
   async importArchive(file: File): Promise<Profile> {
     const body = new FormData()
     body.append('file', file)
-    // No Content-Type: the browser has to set the multipart boundary itself.
     const response = await fetch(`${API_BASE_URL}${API_PREFIX}/profiles/import`, {
       method: 'POST',
       headers: authHeaders(),
@@ -462,411 +615,79 @@ export const profilesAPI = {
     if (!response.ok) {
       notifyAccessDenied(response.status)
       const detail = await response.json().catch(() => null)
-      throw new Error(detail?.detail ?? response.statusText)
+      throw new Error(detail?.detail ?? detail?.error?.message ?? response.statusText)
     }
-    return response.json() as Promise<Profile>
+    emitStatusRefresh()
+    return unwrapEnvelope<Profile>(await response.json())
   },
-
-  async importExcel(file: File): Promise<ImportResult> {
-    const body = new FormData()
-    body.append('file', file)
-    // No Content-Type: the browser has to set the multipart boundary itself.
-    const response = await fetch(`${API_BASE_URL}${API_PREFIX}/profiles/import/excel`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body,
-    })
-    return response.json() as Promise<ImportResult>
-  },
-}
-
-export interface ClearGeographyResult {
-  cleared: string[]
-  unchanged: string[]
-  not_found: string[]
-}
-
-export interface ImportResult {
-  success: boolean
-  message: string
-  data?: { created_count?: number; errors?: string[] }
 }
 
 export const browsersAPI = {
-  active(): Promise<{ active_browsers: { profile_id: string }[]; count: number }> {
-    return request(`${API_PREFIX}/browsers/active`)
+  async active(): Promise<{ active_browsers: { profile_id: string }[]; count: number }> {
+    const body = await request<unknown>(`${API_PREFIX}/browsers/active`)
+    return unwrapEnvelope(body)
   },
 
-  closeAll(): Promise<{ closed_count: number; message: string }> {
-    return request(`${API_PREFIX}/browsers/close-all`, { method: 'POST' })
+  async closeAll(): Promise<{ closed_count: number; message: string }> {
+    const body = await request<unknown>(`${API_PREFIX}/browsers/close-all`, { method: 'POST' })
+    emitStatusRefresh()
+    return unwrapEnvelope(body)
   },
 }
 
 export const groupsAPI = {
-  list(): Promise<{ groups: Group[]; total: number }> {
-    return request(`${API_PREFIX}/groups`)
+  async list(): Promise<{ groups: Group[]; total: number }> {
+    const body = await request<unknown>(`${API_PREFIX}/groups`)
+    return unwrapEnvelope(body)
   },
 
-  create(data: { name: string; description?: string }): Promise<Group> {
-    return request<Group>(`${API_PREFIX}/groups`, { method: 'POST', body: JSON.stringify(data) })
+  async create(data: { name: string; description?: string }): Promise<Group> {
+    const body = await request<unknown>(`${API_PREFIX}/groups`, { method: 'POST', body: JSON.stringify(data) })
+    emitStatusRefresh()
+    return unwrapEnvelope<Group>(body)
   },
 
-  update(id: string, data: { name?: string; description?: string }): Promise<Group> {
-    return request<Group>(`${API_PREFIX}/groups/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+  async update(id: string, data: { name?: string; description?: string }): Promise<Group> {
+    const body = await request<unknown>(`${API_PREFIX}/groups/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+    return unwrapEnvelope<Group>(body)
   },
 
-  remove(id: string): Promise<void> {
-    return request<void>(`${API_PREFIX}/groups/${id}`, { method: 'DELETE' })
-  },
-}
-
-// --- Schedules ---------------------------------------------------------------
-
-/** What a schedule does when it fires. Hardware regeneration is deliberately
- * not schedulable: it would hand a warmed-up account new hardware on a timer,
- * which is exactly what the pinned machine exists to prevent. */
-export type ScheduleAction = 'launch' | 'refresh_browser'
-
-export type ScheduleKind = 'interval' | 'daily'
-
-export type ScheduleRunOutcome = 'ok' | 'skipped' | 'error' | 'missed'
-
-export interface ScheduleRun {
-  id: number | null
-  schedule_id: string
-  started_at: string
-  finished_at: string | null
-  outcome: ScheduleRunOutcome
-  message: string | null
-}
-
-export interface Schedule {
-  id: string
-  profile_id: string
-  profile_name: string | null
-  action: ScheduleAction
-  kind: ScheduleKind
-  interval_minutes: number | null
-  /** HH:MM on the server's clock. */
-  at_time: string | null
-  /** Weekdays a daily schedule fires, 0=Monday … 6=Sunday; null = every day. */
-  days: number[] | null
-  run_minutes: number | null
-  enabled: boolean
-  next_run_at: string | null
-  last_run: ScheduleRun | null
-  created_at: string
-  updated_at: string
-}
-
-export interface SchedulePayload {
-  profile_id?: string
-  action?: ScheduleAction
-  kind?: ScheduleKind
-  interval_minutes?: number | null
-  at_time?: string | null
-  days?: number[] | null
-  run_minutes?: number | null
-  enabled?: boolean
-}
-
-export const schedulesAPI = {
-  list(): Promise<{ schedules: Schedule[]; total: number }> {
-    return request(`${API_PREFIX}/schedules`)
-  },
-
-  create(data: SchedulePayload): Promise<Schedule> {
-    return request<Schedule>(`${API_PREFIX}/schedules`, { method: 'POST', body: JSON.stringify(data) })
-  },
-
-  update(id: string, data: SchedulePayload): Promise<Schedule> {
-    return request<Schedule>(`${API_PREFIX}/schedules/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-  },
-
-  remove(id: string): Promise<void> {
-    return request<void>(`${API_PREFIX}/schedules/${id}`, { method: 'DELETE' })
-  },
-
-  runNow(id: string): Promise<ScheduleRun> {
-    return request<ScheduleRun>(`${API_PREFIX}/schedules/${id}/run`, { method: 'POST' })
-  },
-
-  runs(id: string): Promise<{ runs: ScheduleRun[]; total: number }> {
-    return request(`${API_PREFIX}/schedules/${id}/runs`)
+  async remove(id: string): Promise<void> {
+    await request<void>(`${API_PREFIX}/groups/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    emitStatusRefresh()
   },
 }
 
-export interface WorkflowStep { name: string; action: 'launch' | 'navigate' | 'wait' | 'close'; url?: string | null; seconds?: number | null }
-export interface WorkflowTarget { profile_id: string; row_version: number }
-export interface WorkflowDefinition {
-  name: string; steps: WorkflowStep[]; concurrency: number
-  timing: { kind: 'interval' | 'daily'; interval_minutes?: number | null; at_time?: string | null; days?: number[] | null } | null
-  schedule_enabled: boolean; scheduled_targets: WorkflowTarget[]
-}
-export interface Workflow { id: string; revision: number; definition: WorkflowDefinition; next_run_at: string | null }
-export interface WorkflowRun {
-  id: string; workflow_id: string; revision: number; state: string; cancel_requested: boolean
-  started_at: string; finished_at: string | null
-  targets: (WorkflowTarget & { state: string; message: string | null; error_code?: string | null; steps: { name: string; action: string; state: string }[] })[]
-}
-export interface WorkflowStart { request_id: string; revision: number; targets: WorkflowTarget[]; retry_of?: string; replay_confirmed?: boolean }
-export const workflowsAPI = {
-  list: () => request<{ workflows: Workflow[] }>(`${API_PREFIX}/workflows`),
-  create: (body: WorkflowDefinition) => request<Workflow>(`${API_PREFIX}/workflows`, { method: 'POST', body: JSON.stringify(body) }),
-  update: (id: string, body: WorkflowDefinition & { revision: number }) => request<Workflow>(`${API_PREFIX}/workflows/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
-  remove: (value: Workflow) => request(`${API_PREFIX}/workflows/${encodeURIComponent(value.id)}?revision=${value.revision}`, { method: 'DELETE' }),
-  start: (id: string, body: WorkflowStart) => request<WorkflowRun>(`${API_PREFIX}/workflows/${encodeURIComponent(id)}/runs`, { method: 'POST', body: JSON.stringify(body) }),
-  runs: (id: string) => request<{ runs: WorkflowRun[] }>(`${API_PREFIX}/workflows/${encodeURIComponent(id)}/runs`),
-  cancel: (id: string, run: string) => request(`${API_PREFIX}/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(run)}/cancel`, { method: 'POST' }),
+export const systemAPI = {
+  async browser(): Promise<BrowserReadiness> {
+    const body = await request<unknown>(`${API_PREFIX}/system/browser`)
+    return unwrapEnvelope<BrowserReadiness>(body)
+  },
+
+  async installBrowser(): Promise<BrowserReadiness> {
+    const body = await request<unknown>(`${API_PREFIX}/system/browser/install`, { method: 'POST' })
+    return unwrapEnvelope<BrowserReadiness>(body)
+  },
+
+  async status(): Promise<SystemStatus> {
+    const body = await request<unknown>(`${API_PREFIX}/system/status`)
+    return unwrapEnvelope<SystemStatus>(body)
+  },
+
+  async config(): Promise<SystemConfig> {
+    const body = await request<unknown>(`${API_PREFIX}/system/config`)
+    return unwrapEnvelope<SystemConfig>(body)
+  },
 }
 
-export interface SystemConfig {
-  version: string
-  host: string
-  port: number
-  database_path: string
-  api_key_set: boolean
-  user_auth_enabled: boolean
-  encryption_enabled: boolean
-  cors_origins: string[]
-  camoufox_available: boolean
-  uptime_seconds: number
-  /** windows, macos or linux: the OS of the computer running the manager. */
-  host_os?: 'windows' | 'macos' | 'linux'
-}
-
-/** Best guess from this browser when the server does not say (non-admin users). */
-export function guessHostOs(): 'windows' | 'macos' | 'linux' {
+export function guessHostOs(): IsolationOs {
   const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform} ${navigator.userAgent}`
   if (/Mac/i.test(platform)) return 'macos'
   if (/Win/i.test(platform)) return 'windows'
   return 'linux'
 }
 
-export interface BrowserReadiness {
-  installed: boolean
-  version: string | null
-  state: 'idle' | 'downloading' | 'ready' | 'error'
-  progress: number | null
-  message: string
-  error: string | null
-}
-
-export interface AppUpdate {
-  current_version: string
-  latest_version: string | null
-  available: boolean
-  release_url: string | null
-  assets: { name: string; url: string }[]
-  error?: string | null
-}
-
-export interface UpdateRecovery {
-  state: string
-  transaction_id?: string
-  created_at?: string
-  target_version?: string
-  browser_version?: string
-  maintenance_active: boolean
-  automatic_install_available: boolean
-  can_cancel: boolean
-  disabled_reason?: string | null
-  phase?: string | null
-  error?: string | null
-  can_download?: boolean
-  can_apply?: boolean
-  can_resume?: boolean
-  can_rollback?: boolean
-  checkpoint_timestamp?: string | null
-  request_pending?: boolean
-  rollback_transaction_id?: string | null
-  installed_version?: string
-}
-
-export interface BackupInfo {
-  id: string
-  profile_id: string
-  profile_name: string
-  created_at: string
-  reason: string
-  size_bytes: number
-}
-
-export interface BackupResult {
-  backups: BackupInfo[]
-  skipped: { profile_id: string; reason: string }[]
-}
-
-export const recoveryAPI = {
-  async trash(): Promise<(Profile & { deleted_at: string })[]> {
-    const body = await request<{ data: { profiles: (Profile & { deleted_at: string })[] } }>(`${API_PREFIX}/trash/profiles`)
-    return body.data.profiles
-  },
-  async restoreProfile(id: string): Promise<Profile> {
-    const body = await request<{ data: Profile }>(`${API_PREFIX}/trash/profiles/${id}/restore`, { method: 'POST' })
-    return body.data
-  },
-  permanentlyDelete(id: string): Promise<unknown> {
-    return request(`${API_PREFIX}/trash/profiles/${id}?confirm=true`, { method: 'DELETE' })
-  },
-  async backups(): Promise<BackupInfo[]> {
-    const body = await request<{ data: { backups: BackupInfo[] } }>(`${API_PREFIX}/system/backups`)
-    return body.data.backups
-  },
-  async createBackup(): Promise<BackupResult> {
-    const body = await request<{ data: BackupResult }>(`${API_PREFIX}/system/backups`, { method: 'POST', body: JSON.stringify({ reason: 'manual' }) })
-    return body.data
-  },
-  async restoreBackup(id: string): Promise<Profile> {
-    const body = await request<{ data: Profile }>(`${API_PREFIX}/system/backups/${id}/restore`, { method: 'POST', body: JSON.stringify({}) })
-    return body.data
-  },
-}
-
-/** A fingerprint captured from a real machine, bundled with Camoufox. */
-export interface DevicePreset {
-  id: string
-  os: string
-  screen?: string | null
-  hardware_concurrency?: number | null
-  gpu?: string | null
-  vendor?: string | null
-  user_agent?: string | null
-}
-
-export const presetsAPI = {
-  async list(os?: string): Promise<DevicePreset[]> {
-    const body = await request<{ data: { presets: DevicePreset[] } }>(
-      `${API_PREFIX}/fingerprints/presets${toQuery({ os })}`,
-    )
-    return body.data.presets
-  },
-}
-
-/** The caller's authentication state, from GET /auth/session. */
-export interface AuthSession {
-  role?: 'administrator' | 'operator' | 'viewer' | null
-  actor_kind?: string
-  can_manage_access?: boolean
-  user_auth_enabled: boolean
-  authenticated: boolean
-  username: string | null
-}
-
-// The session lives in an HttpOnly cookie the browser sends by itself on this
-// same-origin app; nothing here stores or reads a token.
-export const authAPI = {
-  session(): Promise<AuthSession> {
-    return request<AuthSession>(`${API_PREFIX}/auth/session`)
-  },
-
-  login(username: string, password: string): Promise<AuthSession> {
-    return request<AuthSession>(`${API_PREFIX}/auth/login`, {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    })
-  },
-
-  logout(): Promise<unknown> {
-    return request<unknown>(`${API_PREFIX}/auth/logout`, { method: 'POST' })
-  },
-}
-
-export const systemAPI = {
-  async browser(): Promise<BrowserReadiness> {
-    const body = await request<{ data: BrowserReadiness }>(`${API_PREFIX}/system/browser`)
-    return body.data
-  },
-  async installBrowser(): Promise<BrowserReadiness> {
-    const body = await request<{ data: BrowserReadiness }>(`${API_PREFIX}/system/browser/install`, { method: 'POST' })
-    return body.data
-  },
-  async updates(preview = false): Promise<AppUpdate> {
-    const body = await request<{ data: AppUpdate }>(`${API_PREFIX}/system/updates${preview ? '?channel=preview' : ''}`)
-    return body.data
-  },
-  async prepareUpdate(preview = false): Promise<{ release_url: string; backup_count: number; message: string }> {
-    const body = await request<{ data: { release_url: string; backup_count: number; message: string } }>(`${API_PREFIX}/system/updates/prepare${preview ? '?channel=preview' : ''}`, { method: 'POST' })
-    return body.data
-  },
-  downloadVerifiedUpdate(preview = false): Promise<UpdateRecovery> {
-    return request<UpdateRecovery>(`${API_PREFIX}/system/update-recovery/download`, { method: 'POST', body: JSON.stringify({ channel: preview ? 'preview' : 'stable' }) })
-  },
-  requestUpdateAction(action: 'apply' | 'rollback' | 'resume', transactionId: string, timestamp?: string | null): Promise<UpdateRecovery> {
-    return request<UpdateRecovery>(`${API_PREFIX}/system/update-recovery/${action}`, { method: 'POST', body: JSON.stringify({ transaction_id: transactionId, ...(action === 'rollback' ? { confirm_timestamp: timestamp } : {}) }) })
-  },
-  updateRecovery(): Promise<UpdateRecovery> {
-    return request<UpdateRecovery>(`${API_PREFIX}/system/update-recovery`)
-  },
-  cancelUpdatePreparation(): Promise<UpdateRecovery> {
-    return request<UpdateRecovery>(`${API_PREFIX}/system/update-recovery/cancel`, { method: 'POST' })
-  },
-  status(): Promise<SystemStatus> {
-    return request<SystemStatus>(`${API_PREFIX}/system/status`)
-  },
-
-  async config(): Promise<SystemConfig> {
-    const body = await request<{ data: SystemConfig }>(`${API_PREFIX}/system/config`)
-    return body.data
-  },
-}
-
-// --- Display helpers ---------------------------------------------------------
-
-/** Whether a profile states where it is instead of letting its proxy say. */
-export function hasGeography(profile: Profile): boolean {
-  const bs = profile.browser_settings ?? {}
-  return Boolean(bs.timezone || bs.geolocation)
-}
-
-export function formatProxyString(proxy?: ProxyConfig | null): string {
-  if (!proxy || !proxy.server) return ''
-  const scheme = proxy.type ? `${proxy.type}://` : ''
-  return `${scheme}${proxy.server}`
-}
-
-/** How a checked proxy reads: what colour it is, and why.
- *
- * Derived rather than stored, so a row written by an older version cannot
- * disagree with the rules here. An error-level finding is red even when the
- * proxy answered — unsupported SOCKS4 credentials mean the launch is wrong,
- * which is not a milder problem than an unreachable proxy. SOCKS5 authentication
- * is supported through the managed relay.
- */
-export function readProxyCheck(check: ProxyCheckRecord, locale: Locale = 'en'): {
-  tone: 'ok' | 'warn' | 'danger'
-  label: string
-  detail: string
-} {
-  const t: Translator = (message, values) => translate(locale, message, values)
-  const notes = check.findings.filter((finding) => finding.level !== 'info')
-  const worst = notes.find((finding) => finding.level === 'error') ?? notes[0]
-  // Repeats what the row shows on purpose: the line truncates, and an IPv6 exit
-  // address is long enough to be cut off mid-address, taking the country and the
-  // latency with it. The tooltip is the only place left to read them.
-  const lines = [
-    check.reachable ? t('Proxy answered') : t('Proxy did not answer'),
-    check.error ? t(check.error) : null,
-    check.ip,
-    [check.country, check.timezone].filter(Boolean).join(' · ') || null,
-    check.latency_ms !== null ? `${check.latency_ms} ms` : null,
-    ...check.findings.map((finding) => translateProxyDiagnostic(finding.message, t)),
-    t('Checked {time}', { time: formatLastUsed(check.checked_at, locale).toLowerCase() }),
-  ].filter(Boolean)
-
-  const tone = !check.reachable || worst?.level === 'error' ? 'danger' : worst ? 'warn' : 'ok'
-
-  return {
-    tone,
-    // Green and amber differ only in hue at six pixels, which is exactly the
-    // pair a deuteranope cannot separate. The table's other indicator pairs its
-    // dot with a word; this one says the word to screen readers.
-    label: tone === 'ok' ? t('Healthy') : tone === 'warn' ? t('Needs attention') : t('Failing'),
-    detail: lines.join('\n'),
-  }
-}
-
-export function formatLastUsed(value?: string | null, locale: Locale = 'en'): string {
+export function formatLastUsed(value?: string | null, locale: Locale = 'zh-CN'): string {
   const t: Translator = (message, values) => translate(locale, message, values)
   if (!value) return t('Never')
   const date = new Date(value)
@@ -878,6 +699,17 @@ export function formatLastUsed(value?: string | null, locale: Locale = 'en'): st
   if (seconds < 86400) return t('{count}h ago', { count: Math.floor(seconds / 3600) })
   if (seconds < 604800) return t('{count}d ago', { count: Math.floor(seconds / 86400) })
   return date.toLocaleDateString(locale)
+}
+
+export function shortGpuName(gpu?: string | null): string {
+  if (!gpu) return '—'
+  const angleMatch = gpu.match(/ANGLE\s*\([^,]+,\s*([^,(]+)/i)
+  if (angleMatch?.[1]) return angleMatch[1].trim()
+  return gpu.replace(/\s*\([^)]*\)/g, '').trim().slice(0, 34) || gpu.slice(0, 34)
+}
+
+export function profileFingerprintHash(profile: Profile): string | null {
+  return profile.isolation_summary?.fingerprint_hash || profile.isolation?.fingerprint_hash || profile.fingerprint_hash || null
 }
 
 export const OS_LABELS: Record<string, string> = {

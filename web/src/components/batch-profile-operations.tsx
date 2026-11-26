@@ -5,6 +5,7 @@ import { useI18n } from '@/components/i18n-provider'
 import { Modal } from '@/components/modal'
 import { ApiRequestError, profilesAPI } from '@/lib/api'
 import { BatchQueue, MAX_BATCH_CONCURRENCY, MAX_BATCH_SIZE, type BatchSnapshot, type BatchTarget, type BatchStatus } from '@/lib/batch-queue'
+import { getDesktopBridge } from '@/lib/desktop-bridge'
 
 export function BatchProfileOperations({ action, targets, onClose, onUpdated }: {
   action: 'launch' | 'close'
@@ -53,7 +54,20 @@ export function BatchProfileOperations({ action, targets, onClose, onUpdated }: 
     if (!queue.current) {
       queue.current = new BatchQueue(targets, {
         concurrency,
-        execute: id => action === 'launch' ? profilesAPI.startProfile(id) : profilesAPI.closeProfile(id),
+        execute: async id => {
+          const bridge = getDesktopBridge()
+          if (bridge) {
+            if (action === 'launch') {
+              const res = await bridge.openProfile(id)
+              if (!res.ok) {
+                throw new ApiRequestError(res.message ?? 'Failed to open profile', res.status ?? 500, res.code, res.details)
+              }
+              return res
+            }
+            return bridge.closeProfile(id)
+          }
+          return action === 'launch' ? profilesAPI.startProfile(id) : profilesAPI.closeProfile(id)
+        },
         onChange: setSnapshot,
         accessDenied: error => error instanceof ApiRequestError && (error.status === 401 || error.status === 403),
         describeError: error => {

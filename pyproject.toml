@@ -1,18 +1,17 @@
 [project]
 name = "camoufox-profile-manager"
 version = "0.6.0"
-description = "噜噜指纹浏览器: self-hosted, open-source antidetect browser profile manager built on Camoufox (derived from Camoufox Profile Manager)"
+description = "棱镜浏览器 (Prism Browser): local-first isolated antidetect browser manager"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "ConcertoNotes" }, { name = "Camoufox Profile Manager Contributors" }]
 keywords = [
-    "camoufox",
     "antidetect",
     "browser-fingerprint",
-    "playwright",
+    "chromium",
+    "electron",
     "fastapi",
-    "firefox",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -26,16 +25,11 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
     "sqlalchemy>=2.0",
-    "camoufox[geoip]>=0.5.8,<0.6",
-    "playwright>=1.61,<1.63",
+    "maxminddb>=2.6",
     "python-dotenv>=1.0",
     "python-multipart>=0.0.18",
     "aiofiles>=24.1",
-    "openpyxl>=3.1",
     "cryptography>=44.0",
-    # argon2id password hashing for user accounts (OWASP first choice; memory-hard,
-    # unlike bcrypt, and without bcrypt's 72-byte input truncation).
-    "argon2-cffi>=23.1",
     # Clash/Mihomo subscription YAML; parsed only with the safe loader.
     "pyyaml>=6.0",
     "loguru>=0.7",
@@ -45,20 +39,12 @@ dependencies = [
     # Public trace events own orphaned SOCKS streams; upgrade with lifecycle tests.
     "httpcore==1.0.9",
     "packaging>=24.1",
+    "zstandard>=0.23",
     "async-timeout>=5,<6 ; python_full_version < '3.11'",
 ]
 
 [project.optional-dependencies]
-updates = ["tuf>=7,<8"]
-chrome-migration = [
-    "pycryptodome>=3.19",
-    "pyyaml>=6.0",
-    # Windows App-Bound Encryption (v20) unwrap needs the DPAPI/token APIs.
-    # Gated to Windows so a macOS/Linux install of the extra never pulls it in.
-    "pywin32>=306; sys_platform == 'win32'",
-]
-desktop = ["pywebview>=5.0"]
-build = ["pywebview>=5.0", "pyinstaller>=6.0"]
+build = ["pyinstaller>=6.0"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -66,16 +52,12 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
 ]
-sync = [
-    "cryptography>=50.0.2,<51",
-    "pynacl>=1.6.2,<1.7",
-    "keyring>=25.7,<26",
-]
 
 [project.scripts]
 camoufox-pm = "camoufox_pm.cli:main"
-camoufox-sync-relay = "camoufox_pm.sync.relay_cli:main"
-camoufox-sync-recovery = "camoufox_pm.sync.recovery_workflow:main"
+prism-backend = "camoufox_pm.sidecar:main"
+prism-cloud-server = "cloud_server.app:main"
+lulu-cloud-server = "cloud_server.app:main"
 
 [project.urls]
 Homepage = "https://github.com/ConcertoNotes/Fingerprint-Browser"
@@ -88,19 +70,23 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/camoufox_pm"]
+packages = ["src/camoufox_pm", "cloud_server"]
 # The bundled web UI is generated (scripts/build_webui.py) and git-ignored, so
 # include it explicitly when building a wheel.
-artifacts = ["src/camoufox_pm/webui/**"]
+artifacts = [
+    "src/camoufox_pm/webui/**",
+]
 
 [tool.hatch.build.targets.sdist]
-# Ship source only — keep the huge web build artifacts out of the sdist.
+# Ship source only — keep the huge web/electron build artifacts out of the sdist.
 exclude = [
     "/web/node_modules",
     "/web/.next",
     "/web/out",
+    "/electron/node_modules",
     "/src/camoufox_pm/webui",
     "/dist",
+    "/build",
     "/.venv",
     "/.mypy_cache",
     "/.pytest_cache",
@@ -112,7 +98,7 @@ exclude = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src", "tests"]
+src = ["src", "cloud_server", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W", "C4"]

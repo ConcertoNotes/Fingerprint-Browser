@@ -1,0 +1,156 @@
+name: Windows Auto Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-windows:
+    name: Build & Publish Windows x64 Installer
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+      WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            electron/package-lock.json
+
+      - name: Setup uv and Python 3.12
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install Python sidecar build dependencies
+        run: uv sync --extra build
+
+      - name: Install Electron dependencies and run unit tests
+        working-directory: electron
+        run: |
+          npm ci
+          npm test
+
+      - name: Prepare compact offline runtime (proxy engine + GeoIP)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/prepare_bundled_runtime.py
+
+      - name: Build static WebUI and slim Python sidecar
+        run: uv run --no-sync python scripts/build_desktop.py --sidecar-only --skip-runtime
+
+      - name: Verify Windows sidecar self-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/prism-backend/prism-backend.exe --version
+          OUT=$(./build/prism-backend/prism-backend.exe --self-check)
+          echo "$OUT"
+          uv run --no-sync python -c '
+          import json, sys
+          lines = [line.strip() for line in sys.argv[1].splitlines() if line.strip()]
+          payload = json.loads(lines[-1])
+          assert payload["engine"] == "prism-sidecar", payload
+          assert payload["webui"] is True, payload
+          assert payload["chrome_presets"] >= 60, payload
+          assert payload["routes"] > 0, payload
+          ' "$OUT"
+
+      - name: Package Windows x64 NSIS installer
+        run: uv run --no-sync python scripts/build_desktop.py --package-only
+
+      - name: Verify installer, update windows-latest tag, and generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTALLER="dist/prism-browser-windows-x64-setup.exe"
+          CHECKSUM_FILE="${INSTALLER}.sha256"
+          test -f "$INSTALLER"
+          test -f "$CHECKSUM_FILE"
+
+          uv run --no-sync python - <<'PY'
+          import os
+          import subprocess
+          import textwrap
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          installer = Path("dist/prism-browser-windows-x64-setup.exe")
+          checksum_line = Path("dist/prism-browser-windows-x64-setup.exe.sha256").read_text(encoding="utf-8").strip()
+          sha256 = checksum_line.split()[0]
+          size_mb = installer.stat().st_size / (1024 * 1024)
+          commit_sha = os.environ["GITHUB_SHA"]
+          short_sha = commit_sha[:7]
+          commit_msg = subprocess.check_output(
+              ["git", "log", "-1", "--pretty=%s"], text=True, encoding="utf-8"
+          ).strip()
+          built_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+          body = textwrap.dedent(
+              f"""\
+              ## 棱镜浏览器 Windows 安装包 (Latest) / Prism Browser Windows x64 Installer
+
+              每次推送至 `main` 分支后自动构建并发布的最新 Windows x64 离线安装包（内置 Chromium 隔离多视图工作区、本地代理路由引擎与离线 GeoIP 数据库，开箱即用无需额外下载内核）。
+
+              Automatically built and published on every push to `main` (all-in-one offline Windows x64 installer with embedded Chromium workspace, local proxy engine, and offline GeoIP database).
+
+              ### 构建信息 / Build Metadata
+              - **安装包 / Installer**: `{installer.name}` ({size_mb:.1f} MB)
+              - **提交 / Commit**: `{short_sha}` (`{commit_sha}`)
+              - **提交说明 / Message**: {commit_msg}
+              - **构建时间 / Built At**: `{built_at}`
+              - **SHA-256**: `{sha256}`
+
+              ### 校验方式 / Verify Checksum (PowerShell)
+              ```powershell
+              (Get-FileHash .\\{installer.name} -Algorithm SHA256).Hash.ToLower() -eq "{sha256}"
+              ```
+              """
+          )
+          Path("dist/release-notes.md").write_text(body, encoding="utf-8")
+          PY
+
+          cat dist/release-notes.md
+          git tag -f windows-latest "$GITHUB_SHA"
+          git push -f origin windows-latest
+
+      - name: Publish Windows installer to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: windows-latest
+          name: "棱镜浏览器 Windows 安装包 (Latest)"
+          body_path: dist/release-notes.md
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            dist/*-setup.exe
+            dist/*-setup.exe.sha256
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: prism-browser-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/*-setup.exe
+            dist/*-setup.exe.sha256

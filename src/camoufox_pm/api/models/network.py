@@ -11,9 +11,9 @@ class _Strict(BaseModel):
 
 class SubscriptionCreateRequest(_Strict):
     name: str | None = Field(None, max_length=80)
-    url: str | None = Field(None, max_length=4096, description="HTTPS Clash/Mihomo subscription")
+    url: str | None = Field(None, max_length=4096, description="HTTPS proxy subscription link")
     content: str | None = Field(
-        None, max_length=10 * 1024 * 1024, description="Clash/Mihomo YAML text of a local file"
+        None, max_length=10 * 1024 * 1024, description="Proxy subscription YAML or link list text"
     )
     file_name: str | None = Field(None, max_length=128)
 

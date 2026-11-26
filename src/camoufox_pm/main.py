@@ -1,4 +1,4 @@
-"""噜噜指纹浏览器 REST API (derived from Camoufox Profile Manager)."""
+"""棱镜浏览器 (Prism Browser) REST API (derived from Camoufox Profile Manager, MIT)."""
 
 import asyncio
 import mimetypes
@@ -15,296 +15,129 @@ from camoufox_pm import __version__
 from camoufox_pm.api.dependencies import (
     require_auth,
     set_profile_manager,
-    set_scheduler,
     set_storage_manager,
 )
 from camoufox_pm.api.errors import install_error_handlers
-from camoufox_pm.api.middleware.access import AccessMiddleware
 from camoufox_pm.api.middleware.logging import LoggingMiddleware
-from camoufox_pm.api.middleware.maintenance import MaintenanceMiddleware
 from camoufox_pm.api.models.system import ErrorResponse, HealthResponse
 from camoufox_pm.api.routes import (
-    access,
-    auth,
+    cloud,
     cookies,
-    extensions,
     groups,
     network,
     profiles,
-    proxies,
-    recovery,
     runtime,
-    saved_filters,
-    schedules,
-    sync,
     system,
-    templates,
-    workflows,
 )
-from camoufox_pm.config import get_settings
-from camoufox_pm.core.backups import ProfileBackupManager
+from camoufox_pm.config import Settings, get_settings
+from camoufox_pm.core.browser_install import browser_installer
 from camoufox_pm.core.database import StorageManager
-from camoufox_pm.core.maintenance import MaintenanceBlocked, MaintenanceGate
 from camoufox_pm.core.profile_manager import ProfileManager
-from camoufox_pm.core.scheduler import TaskScheduler
 
 settings = get_settings()
-maintenance_gate = MaintenanceGate(
-    Path(settings.db_path).parent / "update-control" / "maintenance.sqlite3"
-)
+
+CLOUD_HEARTBEAT_INTERVAL_SECONDS = 15 * 60
+
+
+def _should_background_sync(status: object, *, is_startup: bool) -> bool:
+    """Return whether startup/heartbeat sync should contact the cloud server."""
+    configured = bool(getattr(status, "configured", False))
+    if not configured:
+        return False
+    has_token = bool(getattr(status, "has_token", False))
+    if get_settings().client_edition == "customer":
+        return has_token
+    auto_sync = bool(getattr(status, "auto_sync_on_startup", False))
+    if is_startup:
+        return auto_sync
+    return has_token or auto_sync
+
+
+async def _startup_cloud_sync(profile_manager: ProfileManager) -> None:
+    """Silently sync cloud policy and subscriptions on startup if enabled."""
+    try:
+        from camoufox_pm.core.cloud import CloudDeliveryService
+
+        service = CloudDeliveryService(profile_manager)
+        status = service.get_status()
+        if _should_background_sync(status, is_startup=True):
+            await service.sync_all()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - startup must never fail when offline
+        logger.warning(f"Startup cloud sync skipped: {exc}")
+
+
+async def _cloud_sync_heartbeat_loop(
+    profile_manager: ProfileManager,
+    *,
+    interval_seconds: float = CLOUD_HEARTBEAT_INTERVAL_SECONDS,
+) -> None:
+    """Run startup cloud sync followed by a periodic silent manifest/entitlement heartbeat."""
+    await _startup_cloud_sync(profile_manager)
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            from camoufox_pm.core.cloud import CloudDeliveryService
+
+            service = CloudDeliveryService(profile_manager)
+            status = service.get_status()
+            if _should_background_sync(status, is_startup=False):
+                await service.sync_all()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - heartbeat must never stop on transient outage
+            logger.warning(f"Periodic cloud heartbeat skipped: {exc}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize shared resources on startup and clean up on shutdown."""
-    logger.info("Starting LuLu Fingerprint Browser API...")
-
-    if maintenance_gate.blocked:
-        raise MaintenanceBlocked(
-            "An interrupted update requires recovery before opening application data"
-        )
-    storage_manager = StorageManager(settings.db_path)
-    profile_manager = None
-    scheduler = None
-    backup_task = None
-    sync_task = None
+    logger.info("Starting Prism Browser API...")
+    current_settings = get_settings()
+    storage_manager = StorageManager(current_settings.db_path)
+    profile_manager: ProfileManager | None = None
+    cloud_sync_task: asyncio.Task[None] | None = None
     try:
-        with maintenance_gate.operation():
-            maintenance_gate.register_manager()
-            await storage_manager.initialize()
-            data_dir = str(Path(settings.db_path).parent)
-            profile_manager = ProfileManager(storage_manager, data_dir)
-            await profile_manager.initialize()
-            set_storage_manager(storage_manager)
-            set_profile_manager(profile_manager)
-            sync.set_sync_directory(
-                Path(settings.db_path).expanduser().resolve().parent / "sync-control"
-            )
-
-            def sync_runtime():
-                from camoufox_pm.sync.runtime import SyncRuntime
-
-                return SyncRuntime(profile_manager, maintenance_gate)
-
-            sync.set_sync_runtime_factory(sync_runtime)
-
-            backup_manager = ProfileBackupManager(
-                profile_manager,
-                retention=settings.backup_retention,
-                interval_hours=settings.backup_interval_hours,
-            )
-            recovery.set_backup_manager(backup_manager)
-
-            async def back_up_idle_profiles():
-                while True:
-                    try:
-                        with maintenance_gate.operation():
-                            await backup_manager.create_due_backups()
-                    except Exception as exc:
-                        logger.warning(f"Automatic profile backup failed: {exc}")
-                    await asyncio.sleep(60)
-
-            scheduler = TaskScheduler(storage_manager, profile_manager)
-            scheduler.maintenance_gate = maintenance_gate
-            await scheduler.start()
-            set_scheduler(scheduler)
-            backup_task = asyncio.create_task(back_up_idle_profiles(), name="profile-backups")
-            from camoufox_pm.core.sync_background import sync_queue_worker
-
-            sync_task = asyncio.create_task(
-                sync_queue_worker(profile_manager, maintenance_gate), name="profile-sync"
-            )
+        await storage_manager.initialize()
+        data_dir = str(Path(current_settings.db_path).parent)
+        # Bootstrap bundled offline runtime (proxy engine + GeoIP synchronously,
+        # paired isolation browser archive asynchronously in background).
+        browser_installer.ensure_bundled_ready_async(Path(data_dir))
+        profile_manager = ProfileManager(storage_manager, data_dir)
+        await profile_manager.initialize()
+        set_storage_manager(storage_manager)
+        set_profile_manager(profile_manager)
+        cloud_sync_task = asyncio.create_task(
+            _cloud_sync_heartbeat_loop(profile_manager), name="cloud-sync-heartbeat"
+        )
         logger.info("API ready")
         yield
     finally:
-        # This also runs when startup fails, so a failed desktop launch leaves
-        # neither a heartbeat nor a recovery task holding the database open.
         logger.info("Shutting down API...")
         try:
-            if sync_task is not None:
-                sync_task.cancel()
+            if cloud_sync_task is not None:
+                cloud_sync_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await sync_task
-            if backup_task is not None:
-                backup_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await backup_task
-            if scheduler is not None:
-                await scheduler.stop()
+                    await cloud_sync_task
             if profile_manager is not None:
-                # Stop renewal before releasing any of this instance's leases.
                 await profile_manager.browser_sessions.stop_heartbeat()
                 try:
                     await profile_manager.browser_sessions.close_all()
                 except Exception as exc:
                     logger.warning(f"Failed to close browsers on shutdown: {exc}")
-                # Probe pools and any engine whose browser is already gone.
                 await profile_manager.network_probe.shutdown()
                 await profile_manager.network.shutdown()
                 await profile_manager.release_all_leases()
         finally:
-            sync.set_sync_runtime_factory(None)
-            sync.set_sync_directory(None)
-            recovery.set_backup_manager(None)
             await storage_manager.close()
-            maintenance_gate.unregister_manager()
 
 
-app = FastAPI(
-    title="噜噜指纹浏览器 API",
-    description=(
-        "Self-hosted, open-source antidetect browser profile manager built on "
-        "Camoufox. Manage profiles and groups, generate fingerprints, launch the "
-        "browser, and drive everything over a REST API.\n\n"
-        "Endpoints live under `/api/v1`. The unversioned `/api/...` paths from "
-        "before 0.2 keep working as aliases but are left out of this schema; "
-        "see the stability contract in `docs/api.md`."
-    ),
-    version=__version__,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan,
-    responses={"4XX": {"model": ErrorResponse}, "5XX": {"model": ErrorResponse}},
-)
-install_error_handlers(app)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    # Auth is via the X-API-Key header, not cookies; credentialed CORS would also
-    # be rejected by browsers when combined with the wildcard method/header lists.
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(AccessMiddleware)
-app.add_middleware(MaintenanceMiddleware, gate=maintenance_gate)
-
-# Session-or-API-key guard; a no-op when neither users nor CPM_API_KEY exist.
-protected = [Depends(require_auth)]
-# /api/v1 is the canonical prefix. The same routers are also served under the
-# pre-0.2 unversioned /api so existing scripts keep working; those copies are
-# left out of the schema so a generated client sees each operation once.
-for _prefix, _in_schema in (("/api/v1", True), ("/api", False)):
-    # Unguarded on purpose: login has to work logged out, and /auth/session is
-    # how the UI decides whether to show the login screen.
-    app.include_router(
-        auth.router,
-        prefix=_prefix,
-        tags=["Auth"],
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        sync.router,
-        prefix=_prefix,
-        tags=["Sync"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        access.router,
-        prefix=_prefix,
-        tags=["Access"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        profiles.router,
-        prefix=_prefix,
-        tags=["Profiles"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        groups.router,
-        prefix=_prefix,
-        tags=["Groups"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        schedules.router,
-        prefix=_prefix,
-        tags=["Schedules"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    app.include_router(
-        system.router,
-        prefix=_prefix,
-        tags=["System"],
-        dependencies=protected,
-        include_in_schema=_in_schema,
-    )
-    for _router in (recovery.router, runtime.router, proxies.router, workflows.router):
-        app.include_router(
-            _router,
-            prefix=_prefix,
-            tags=["System"],
-            dependencies=protected,
-            include_in_schema=_in_schema,
-        )
-    for _router, _tag in (
-        (cookies.router, "Cookies"),
-        (extensions.router, "Extensions"),
-        (templates.router, "Templates"),
-        (saved_filters.router, "Saved views"),
-        (network.router, "Network"),
-    ):
-        app.include_router(
-            _router,
-            prefix=_prefix,
-            tags=[_tag],
-            dependencies=protected,
-            include_in_schema=_in_schema,
-        )
-
-
-@app.get(
-    "/health",
-    tags=["System"],
-    response_model=HealthResponse,
-    operation_id="health_check",
-    summary="Report API and database health.",
-)
-async def health_check():
-    """Report API and database health. Unversioned so probes survive API versions."""
-    from camoufox_pm.api.dependencies import get_profile_manager
-
-    try:
-        profile_mgr = get_profile_manager()
-        profiles_list = await profile_mgr.list_profiles()
-        return HealthResponse(
-            status="healthy",
-            api_version=__version__,
-            database="connected",
-            profiles_count=None
-            if await profile_mgr.storage.count_users() or get_settings().api_key
-            else len(profiles_list),
-        )
-    except Exception:
-        # 503 rather than a healthy-looking 200, so load balancers and container
-        # healthchecks see the failure without parsing the body.
-        return JSONResponse(
-            status_code=503,
-            content=HealthResponse(
-                status="unhealthy",
-                api_version=__version__,
-                database="disconnected",
-                profiles_count=0,
-            ).model_dump(),
-        )
-
-
-def _webui_dir() -> Path | None:
-    """Locate the bundled static web UI, if present.
-
-    Looks at ``CPM_WEBUI_DIR``, then the package's ``webui/`` directory (populated
-    by ``scripts/build_webui.py``), then ``web/out`` for running from source.
-    """
+def _webui_dir(app_settings: Settings | None = None) -> Path | None:
+    """Locate the bundled static web UI, if present."""
+    effective = app_settings or get_settings()
     candidates = [
-        settings.webui_dir,
+        effective.webui_dir,
         str(Path(__file__).parent / "webui"),
         "web/out",
     ]
@@ -314,22 +147,103 @@ def _webui_dir() -> Path | None:
     return None
 
 
-# Serve the web UI on the same origin as the API when a build is available;
-# otherwise redirect the root to the API docs. Mounted last so /api and /health
-# and /docs take precedence over the catch-all static mount.
-_webui = _webui_dir()
-# The map's module worker must be served as JavaScript; some platforms' MIME
-# tables (older Pythons, Windows registry entries) do not know ``.mjs``.
-mimetypes.add_type("text/javascript", ".mjs")
-if _webui is not None:
-    app.mount("/", StaticFiles(directory=str(_webui), html=True), name="webui")
-    logger.info(f"Serving web UI from {_webui}")
-else:
+def create_app(app_settings: Settings | None = None) -> FastAPI:
+    """Build the FastAPI application, hiding API docs in customer edition."""
+    effective = app_settings or get_settings()
+    is_customer = effective.client_edition == "customer"
+    instance = FastAPI(
+        title=f"{effective.brand_name} API",
+        description=(
+            "Local desktop antidetect isolation browser manager. "
+            "Manage strictly isolated browser windows, world-map dedicated proxy bindings, "
+            "fixed-optimization hardware fingerprints, and cloud-delivered policies over a clean REST API."
+        ),
+        version=__version__,
+        docs_url=None if is_customer else "/docs",
+        redoc_url=None if is_customer else "/redoc",
+        openapi_url=None if is_customer else "/openapi.json",
+        lifespan=lifespan,
+        responses={"4XX": {"model": ErrorResponse}, "5XX": {"model": ErrorResponse}},
+    )
+    install_error_handlers(instance)
 
-    @app.get("/", include_in_schema=False)
-    async def root():
-        """Redirect to the API documentation when no web UI is bundled."""
-        return RedirectResponse(url="/docs")
+    instance.add_middleware(
+        CORSMiddleware,
+        allow_origins=effective.cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    instance.add_middleware(LoggingMiddleware)
+
+    protected = [Depends(require_auth)]
+    for _prefix, _in_schema in (("/api/v1", True), ("/api", False)):
+        for _router, _tag in (
+            (profiles.router, "Profiles"),
+            (network.router, "Network"),
+            (cloud.router, "Cloud"),
+            (groups.router, "Groups"),
+            (cookies.router, "Cookies"),
+            (runtime.router, "Runtime"),
+            (system.router, "System"),
+        ):
+            instance.include_router(
+                _router,
+                prefix=_prefix,
+                tags=[_tag],
+                dependencies=protected,
+                include_in_schema=_in_schema,
+            )
+
+    @instance.get(
+        "/health",
+        tags=["System"],
+        response_model=HealthResponse,
+        operation_id="health_check",
+        summary="Report API and database health.",
+    )
+    async def health_check():
+        """Report API and database health."""
+        from camoufox_pm.api.dependencies import get_profile_manager
+
+        try:
+            profile_mgr = get_profile_manager()
+            profiles_list = await profile_mgr.list_profiles()
+            return HealthResponse(
+                status="healthy",
+                api_version=__version__,
+                database="connected",
+                profiles_count=None if get_settings().api_key else len(profiles_list),
+            )
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content=HealthResponse(
+                    status="unhealthy",
+                    api_version=__version__,
+                    database="disconnected",
+                    profiles_count=0,
+                ).model_dump(),
+            )
+
+    webui = _webui_dir(effective)
+    mimetypes.add_type("text/javascript", ".mjs")
+    if webui is not None:
+        instance.mount("/", StaticFiles(directory=str(webui), html=True), name="webui")
+        logger.info(f"Serving web UI from {webui}")
+    else:
+
+        @instance.get("/", include_in_schema=False)
+        async def root():
+            """Redirect to API docs in standard mode, or return minimal status in customer mode."""
+            if is_customer:
+                return {"status": "ok", "service": effective.brand_name}
+            return RedirectResponse(url="/docs")
+
+    return instance
+
+
+app = create_app(settings)
 
 
 if __name__ == "__main__":

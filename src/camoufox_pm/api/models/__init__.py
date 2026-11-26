@@ -1,4 +1,4 @@
-"""API models for 噜噜指纹浏览器."""
+"""API models for 棱镜浏览器 (Prism Browser)."""
 
 from .groups import (
     GroupCreateRequest,
@@ -7,6 +7,9 @@ from .groups import (
     GroupUpdateRequest,
 )
 from .profiles import (
+    IsolationAuditCheckResponse,
+    IsolationAuditResponse,
+    IsolationInput,
     ProfileCloneRequest,
     ProfileCreateRequest,
     ProfileLaunchRequest,
@@ -31,6 +34,9 @@ __all__ = [
     "ProfileCloneRequest",
     "ProfileLaunchRequest",
     "ProfileLaunchResponse",
+    "IsolationInput",
+    "IsolationAuditCheckResponse",
+    "IsolationAuditResponse",
     "GroupCreateRequest",
     "GroupUpdateRequest",
     "GroupResponse",

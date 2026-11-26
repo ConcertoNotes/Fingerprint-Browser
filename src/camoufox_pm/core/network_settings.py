@@ -80,7 +80,7 @@ class NetworkSettings:
                     raise ValueError(f"{key} must be between {low} and {high}")
             elif key == "mihomo_path":
                 if value is not None and (not isinstance(value, str) or len(value) > 1024):
-                    raise ValueError("Invalid Mihomo path")
+                    raise ValueError("Invalid proxy routing engine path")
                 value = value.strip() or None if isinstance(value, str) else None
             elif not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false")

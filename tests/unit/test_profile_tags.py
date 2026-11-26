@@ -7,10 +7,8 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from camoufox_pm.core.backups import ProfileBackupManager
-from camoufox_pm.core.database import StaleWriteError, StorageManager
+from camoufox_pm.core.database import StorageManager
 from camoufox_pm.core.models import Profile
-from camoufox_pm.core.saved_filters import SavedFilterStore, ViewConfig
 
 
 def test_tags_normalize_unicode_case_whitespace_and_duplicate_labels():
@@ -151,7 +149,7 @@ async def test_bulk_tags_refuse_stale_targets_without_losing_successes(profile_m
     assert not profile_manager.storage.db._connection.in_transaction
 
 
-async def test_tags_survive_clone_archive_and_backup_restore(profile_manager, tmp_path):
+async def test_tags_survive_clone_and_archive(profile_manager, tmp_path):
     profile = await profile_manager.create_profile(
         name="Tagged", generate_fingerprint=False, tags=["Work", "client-a"]
     )
@@ -161,48 +159,3 @@ async def test_tags_survive_clone_archive_and_backup_restore(profile_manager, tm
     await profile_manager.export_profile(profile.id, archive)
     imported = await profile_manager.import_profile(archive)
     assert imported.tags == profile.tags and imported.id != profile.id
-    backups = ProfileBackupManager(profile_manager)
-    result = await backups.create_backups([profile.id])
-    restored = await backups.restore_backup(result["backups"][0]["id"])
-    assert restored.tags == profile.tags and restored.id != profile.id
-
-
-async def test_saved_views_persist_and_compare_versions_across_connections(storage):
-    store = SavedFilterStore(storage)
-    config = ViewConfig.model_validate(
-        {"tags": ["Work"], "group": "client", "sort_key": "last_used", "sort_direction": "desc"}
-    )
-    view = store.create("Client work", config)
-    second = StorageManager(str(storage.db.db_path))
-    try:
-        await second.initialize()
-        other = SavedFilterStore(second)
-        assert other.get(view.id).config.tags == ["work"]
-        renamed = other.update(view.id, view.row_version, name="Renamed")
-        assert renamed.row_version == 1 and renamed.config == config
-        with pytest.raises(StaleWriteError):
-            store.update(view.id, view.row_version, name="Lost edit")
-        with pytest.raises(StaleWriteError):
-            store.delete(view.id, view.row_version)
-        assert store.get(view.id).name == "Renamed"
-        assert not storage.db._connection.in_transaction
-        assert store.delete(view.id, renamed.row_version)
-        assert other.get(view.id) is None
-    finally:
-        await second.close()
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        {"sort_key": "sql"},
-        {"sort_direction": "sideways"},
-        {"status": "any"},
-        {"search": "x" * 256},
-        {"tags": ["x" * 33]},
-        {"unknown": True},
-    ],
-)
-def test_saved_view_configs_are_bounded_and_do_not_accept_unknown_operations(config):
-    with pytest.raises(ValidationError):
-        ViewConfig.model_validate(config)

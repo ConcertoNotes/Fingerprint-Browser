@@ -22,9 +22,9 @@ DEST = ROOT / "src" / "camoufox_pm" / "webui"
 
 def _npm() -> str:
     """Resolve the npm executable (npm.cmd on Windows)."""
-    npm = shutil.which("npm")
+    npm = shutil.which("npm.cmd" if sys.platform == "win32" else "npm") or shutil.which("npm")
     if npm is None:
-        raise SystemExit("npm not found — install Node.js 20.9+")
+        raise SystemExit("npm not found - install Node.js 20.9+")
     return npm
 
 

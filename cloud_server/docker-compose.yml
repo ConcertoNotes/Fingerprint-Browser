@@ -1,0 +1,59 @@
+services:
+  cloud-server:
+    build:
+      context: ..
+      dockerfile: cloud_server/Dockerfile
+    container_name: prism-cloud-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PRISM_CLOUD_HOST: "0.0.0.0"
+      PRISM_CLOUD_PORT: "8787"
+      PRISM_CLOUD_DB: "/data/cloud_server.db"
+    volumes:
+      - ./cloud_data:/data
+    expose:
+      - "8787"
+    networks:
+      - prism-cloud-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: prism-cloud-caddy
+    restart: unless-stopped
+    depends_on:
+      cloud-server:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - prism-cloud-net
+
+networks:
+  prism-cloud-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

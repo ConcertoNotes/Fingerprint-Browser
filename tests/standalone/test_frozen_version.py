@@ -79,7 +79,7 @@ class FrozenVersionTests(unittest.TestCase):
                 [sys.executable, "-c", code], check=True, capture_output=True, text=True
             )
             self.assertEqual(result.stdout.strip(), repr(value))
-        source = (ROOT / "packaging/camoufox-pm.spec").read_text(encoding="utf-8")
+        source = (ROOT / "packaging/prism-backend.spec").read_text(encoding="utf-8")
         self.assertIn('version("camoufox-profile-manager")', source)
         self.assertIn("runtime_hooks=[str(version_hook)]", source)
 
