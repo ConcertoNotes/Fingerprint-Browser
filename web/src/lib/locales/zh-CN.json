@@ -1696,6 +1696,7 @@
   "Show all nodes": "显示全部节点",
   "Show nodes": "查看节点",
   "Show recovery secret": "显示恢复密钥",
+  "Show {node} on map": "在地图上查看「{node}」",
   "Showing the first 200 matches. Narrow the search to find more.": "显示前 200 条匹配结果。请缩小搜索范围以查找更多结果。",
   "Sign cleanup decision": "签署清理决定",
   "Sign in": "登录",

@@ -2,7 +2,7 @@
 
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Map as MapLibreMap, Marker } from 'maplibre-gl'
 import type Supercluster from 'supercluster'
 import type { PointFeature } from 'supercluster'
@@ -88,21 +88,24 @@ export function WorldMap({
   const mapRef = useRef<MapLibreMap | null>(null)
   const markers = useRef(new Map<string, Marker>())
   const index = useRef<Supercluster<ClusterProps, ClusterProps> | null>(null)
+  const pinnedPoint = useRef<Point | null>(null)
   const maplibre = useRef<typeof import('maplibre-gl') | null>(null)
   const groupsRef = useRef(groups)
   const selectRef = useRef(onSelect)
   const selectedRef = useRef(selectedKey)
   const selectedNodeKeyRef = useRef<string | null>(null)
   const fitted = useRef<string | null>(null)
+  const lastFocus = useRef<{ token?: number; pinnedKey: string | null }>({ pinnedKey: null })
   const popupRef = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const [popup, setPopup] = useState<{ key: string; x: number; y: number } | null>(null)
   const [boundsSize, setBoundsSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
 
-  const selectedNodeGroupKey = selectedNodeId
+  const selectedNodeGroupKey = useMemo(() => selectedNodeId
     ? groups.find(group => group.nodes.some(node => node.node_id === selectedNodeId))?.key ?? null
-    : null
+    : null, [groups, selectedNodeId])
+  const pinnedKey = mode === 'manage' ? selectedNodeGroupKey : null
 
   useEffect(() => { groupsRef.current = groups }, [groups])
   useEffect(() => { selectRef.current = onSelect }, [onSelect])
@@ -290,6 +293,8 @@ export function WorldMap({
       [Math.max(-180, bounds.getWest()), bounds.getSouth(), Math.min(180, bounds.getEast()), bounds.getNorth()],
       zoom,
     )
+    const pinned = pinnedPoint.current
+    if (pinned && bounds.contains(pinned.geometry.coordinates as [number, number])) items.push(pinned)
     const seen = new Set<string>()
     for (const item of items) {
       const isCluster = Boolean((item.properties as { cluster?: boolean }).cluster)
@@ -318,6 +323,7 @@ export function WorldMap({
           placePopup(props.key)
         })
       }
+      if (id === pinned?.properties.key) created.root.style.zIndex = '1'
       markers.current.set(id, new library.Marker({ element: created.root }).setLngLat([lon, lat]).addTo(map))
     }
     for (const [id, marker] of markers.current) {
@@ -341,27 +347,19 @@ export function WorldMap({
         geometry: { type: 'Point', coordinates: group.coordinates },
         properties: { key: group.key, count: group.nodes.length, tone: groupTone(group) },
       }))
-      cluster.load(points)
+      // Keep the requested exit visible at regional zoom even beside other exits.
+      const pinned = points.find(point => point.properties.key === pinnedKey)
+      pinnedPoint.current = pinned ?? null
+      cluster.load(pinned ? points.filter(point => point !== pinned) : points)
       index.current = cluster as unknown as Supercluster<ClusterProps, ClusterProps>
       for (const marker of markers.current.values()) marker.remove()
       markers.current.clear()
-      const map = mapRef.current
-      const wanted = fitKey ?? ''
-      if (map && groups.length && fitted.current !== wanted) {
-        fitted.current = wanted
-        const lons = groups.map(group => group.coordinates[0])
-        const lats = groups.map(group => group.coordinates[1])
-        map.fitBounds(
-          [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
-          { padding: 72, maxZoom: 3.6, duration: 0 },
-        )
-      }
       render()
       if (popupRef.current) placePopup(popupRef.current)
     })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, groups, t, locale, fitKey])
+  }, [ready, groups, t, locale, pinnedKey])
 
   useEffect(() => {
     selectedRef.current = selectedKey
@@ -373,13 +371,27 @@ export function WorldMap({
 
   useEffect(() => {
     const map = mapRef.current
+    if (!ready || !map) return
+    const focusRequested = (focusToken && focusToken !== lastFocus.current.token)
+      || (pinnedKey && pinnedKey !== lastFocus.current.pinnedKey)
+    lastFocus.current = { token: focusToken, pinnedKey }
+    if (!groups.length) return
     const group = groups.find(entry => entry.key === selectedKey)
-    if (!map || !group || focusToken === undefined || focusToken === 0) return
-    map.easeTo({ center: group.coordinates, zoom: Math.max(map.getZoom(), 4.5) })
-    placePopup(group.key)
-    // Fly only when explicitly asked via focusToken.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusToken])
+    const source = fitKey ?? ''
+    if (group && focusRequested) {
+      fitted.current = source
+      map.easeTo({ center: group.coordinates, zoom: Math.max(map.getZoom(), 4.5) })
+      placePopup(group.key)
+    } else if (fitted.current !== source) {
+      fitted.current = source
+      const lons = groups.map(entry => entry.coordinates[0])
+      const lats = groups.map(entry => entry.coordinates[1])
+      map.fitBounds(
+        [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+        { padding: 72, maxZoom: 3.6, duration: 0 },
+      )
+    }
+  }, [ready, groups, selectedKey, focusToken, fitKey, pinnedKey])
 
   const popupGroup = popup ? groups.find(entry => entry.key === popup.key) : undefined
   const popupWidth = 316

@@ -1,7 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Activity, ArrowLeft, Cloud, Globe2, LoaderCircle, MapPin, Play, Plus, RefreshCw, Search, Square, TriangleAlert, X } from 'lucide-react'
 
 import { CreateBrowserModal } from '@/components/create-browser-modal'
@@ -32,13 +33,33 @@ const TONE_DOT = { ok: 'bg-ok-dot', warn: 'bg-warn-dot', danger: 'bg-danger-dot'
 const TONE_TEXT = { ok: 'text-ok', warn: 'text-warn', danger: 'text-danger', unknown: 'text-ink-dim' } as const
 const SOURCE_KEY = 'cpm.map.source'
 
+type MapSelection =
+  | { kind: 'binding'; expanded: boolean }
+  | { kind: 'location'; key: string | null; nodeId: string | null }
+
+const ALL_LOCATIONS = { kind: 'location', key: null, nodeId: null } as const
+
 export default function NetworkMapPage() {
+  const { t } = useI18n()
+  return (
+    <Suspense fallback={<p className="px-5 py-8 text-ink-dim" role="status">{t('Loading…')}</p>}>
+      <MapRoute />
+    </Suspense>
+  )
+}
+
+function MapRoute() {
+  const params = useSearchParams()
+  return <NetworkMapWorkspace key={params.toString()} initialProfileId={params.get('profile')} initialSource={params.get('source')} />
+}
+
+function NetworkMapWorkspace({ initialProfileId, initialSource }: { initialProfileId: string | null; initialSource: string | null }) {
   const { t, locale } = useI18n()
   const toast = useToast()
   const { workspaces, openProfileInWorkspace, closeProfileWorkspace, activateWorkspace } = useWorkspace()
   const [map, setMap] = useState<NetworkMap | null>(null)
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
-  const [source, setSource] = useState<string>('all')
+  const [source, setSource] = useState<string | null>(null)
   const [nodes, setNodes] = useState<Record<string, NetworkNode>>({})
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [groups, setGroups] = useState<Group[]>([])
@@ -47,10 +68,9 @@ export default function NetworkMapPage() {
   const [status, setStatus] = useState<NetworkStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const [focusToken, setFocusToken] = useState(0)
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [selectedProfileId, setSelectedProfileId] = useState(initialProfileId)
+  const [selection, setSelection] = useState<MapSelection>(initialProfileId ? { kind: 'binding', expanded: true } : ALL_LOCATIONS)
+  const [focusToken, setFocusToken] = useState(initialProfileId ? 1 : 0)
   const [search, setSearch] = useState('')
   const [health, setHealth] = useState<'all' | 'ok' | 'error'>('all')
   const [busyNodes, setBusyNodes] = useState<Set<string>>(new Set())
@@ -61,6 +81,8 @@ export default function NetworkMapPage() {
   const [driftBlock, setDriftBlock] = useState<{ profile: Profile; drift: ExitIpDriftDetail } | null>(null)
   const [driftRetrying, setDriftRetrying] = useState(false)
   const jobTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mapSection = useRef<HTMLElement>(null)
+  const detailList = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -76,6 +98,10 @@ export default function NetworkMapPage() {
       ])
       setMap(mapData)
       setSubscriptions(subscriptionData)
+      const preferredSource = initialSource ?? readSource() ?? 'all'
+      const initialBinding = bindingData.find(binding => binding.profile_id === initialProfileId)
+      const sourceForProfile = initialBinding && preferredSource !== 'all' ? initialBinding.node.subscription_id : preferredSource
+      setSource(current => current ?? sourceForProfile)
       setNodes(Object.fromEntries(nodeData.nodes.map(node => [node.id, node])))
       setProfiles(profileData)
       setGroups(groupData.groups)
@@ -88,24 +114,19 @@ export default function NetworkMapPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [initialProfileId, initialSource])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load()
-    const params = new URLSearchParams(window.location.search)
-    const preselected = params.get('profile')
-    if (preselected) setSelectedProfileId(preselected)
-    const wanted = params.get('source') ?? readSource()
-    if (wanted) setSource(wanted)
     return () => { if (jobTimer.current) clearTimeout(jobTimer.current) }
   }, [load])
 
-  const activeSource = source === 'all' || subscriptions.some(entry => entry.id === source) || !subscriptions.length ? source : 'all'
+  const activeSource = source && (!subscriptions.length || subscriptions.some(entry => entry.id === source)) ? source : 'all'
 
   function chooseSource(value: string) {
     setSource(value)
-    setSelectedKey(null)
+    setSelection(ALL_LOCATIONS)
     try { window.localStorage.setItem(SOURCE_KEY, value) } catch { /* storage unavailable */ }
   }
 
@@ -122,7 +143,6 @@ export default function NetworkMapPage() {
   }), [map, health, query, locale, activeSource])
 
   const locationGroups = useMemo(() => groupByLocation(features), [features])
-  const selectedGroup = locationGroups.find(group => group.key === selectedKey) ?? null
   const unknown = useMemo(() => (map?.unknown_location ?? []).filter(item =>
     (activeSource === 'all' || item.subscription_id === activeSource)
     && (health === 'all' || item.health === health)
@@ -148,12 +168,57 @@ export default function NetworkMapPage() {
 
   const selectedProfile = profiles.find(profile => profile.id === selectedProfileId) ?? null
   const selectedBinding = selectedProfileId ? bindings[selectedProfileId] : undefined
+  const boundNode = selection.kind === 'binding' && selectedBinding
+    ? nodes[selectedBinding.node_id] ?? selectedBinding.node
+    : null
+  const selectedGroup = selection.kind === 'location'
+    ? locationGroups.find(group => group.key === selection.key)
+    : boundNode && locationGroups.find(group => group.nodes.some(node => node.node_id === boundNode.id))
+  const expanded = selection.kind === 'location' ? selection.nodeId : selection.expanded ? boundNode?.id : null
+  const boundNodeId = boundNode?.id
+  const hasPin = Boolean(selectedGroup)
+
+  useEffect(() => {
+    if (!boundNodeId) return
+    detailList.current?.scrollTo({ top: 0 })
+    if (!window.matchMedia('(min-width: 80rem)').matches) {
+      const target = hasPin ? mapSection.current : detailList.current
+      target?.scrollIntoView({ block: 'start' })
+    }
+  }, [boundNodeId, hasPin, focusToken])
+
+  function selectProfile(profileId: string | null) {
+    setSelectedProfileId(profileId)
+    const binding = profileId ? bindings[profileId] : undefined
+    if (!binding) {
+      if (selection.kind === 'binding') setSelection(ALL_LOCATIONS)
+      return
+    }
+    if (activeSource !== 'all' && activeSource !== binding.node.subscription_id) setSource(binding.node.subscription_id)
+    if (!features.some(feature => feature.properties.node_id === binding.node_id) && !unknown.some(item => item.node_id === binding.node_id)) {
+      setSearch('')
+      setHealth('all')
+    }
+    setSelection({ kind: 'binding', expanded: true })
+    setFocusToken(token => token + 1)
+  }
 
   function selectGroup(key: string, fly = false) {
-    setSelectedKey(key)
+    if (boundNode && selectedGroup?.key === key) {
+      selectProfile(selectedProfileId)
+      return
+    }
     const group = locationGroups.find(entry => entry.key === key)
-    setExpanded(group?.nodes[0]?.node_id ?? null)
+    setSelection({ kind: 'location', key, nodeId: group?.nodes[0]?.node_id ?? null })
     if (fly) setFocusToken(token => token + 1)
+  }
+
+  function toggleExpanded(nodeId: string) {
+    if (selection.kind === 'binding' && boundNode) {
+      setSelection({ kind: 'binding', expanded: !selection.expanded })
+    } else {
+      setSelection({ kind: 'location', key: selectedGroup?.key ?? null, nodeId: expanded === nodeId ? null : nodeId })
+    }
   }
 
   function markBusy(setter: typeof setBusyNodes, id: string, on: boolean) {
@@ -348,9 +413,8 @@ export default function NetworkMapPage() {
   }
 
   function openNode(group: LocationGroup, nodeId: string) {
-    setSelectedKey(group.key)
-    setExpanded(nodeId)
-    requestAnimationFrame(() => document.getElementById(`node-${nodeId}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+    setSelection(boundNodeId === nodeId ? { kind: 'binding', expanded: true } : { kind: 'location', key: group.key, nodeId })
+    requestAnimationFrame(() => document.getElementById(`node-${nodeId}`)?.scrollIntoView({ block: 'nearest' }))
   }
 
   function openCreateWithNode(nodeId: string) {
@@ -359,12 +423,12 @@ export default function NetworkMapPage() {
   }
 
   function renderPopup(group: LocationGroup, close: () => void) {
-    const shown = group.nodes.slice(0, 6)
+    const shown = boundNode ? group.nodes.filter(item => item.node_id === boundNode.id) : group.nodes.slice(0, 6)
     return (
       <div className="py-2">
         <div className="px-3.5 pb-2 pr-8">
           <p className="truncate text-[13px] font-semibold text-ink">{groupTitle(group, locale, t)}</p>
-          <p className="text-[11px] text-ink-dim">{t('{ok}/{count} up', { ok: group.health.ok, count: group.nodes.length })}</p>
+          {!boundNode && <p className="text-[11px] text-ink-dim">{t('{ok}/{count} up', { ok: group.health.ok, count: group.nodes.length })}</p>}
         </div>
         <ul className="max-h-[260px] divide-y divide-line overflow-y-auto border-t border-line">
           {shown.map(item => {
@@ -406,23 +470,23 @@ export default function NetworkMapPage() {
             )
           })}
         </ul>
-        {group.nodes.length > shown.length && (
+        {!boundNode && group.nodes.length > shown.length && (
           <p className="px-3.5 pt-1.5 text-[11px] text-ink-dim">{t('{count} more in the side panel', { count: group.nodes.length - shown.length })}</p>
         )}
       </div>
     )
   }
 
-  const detailNodes = selectedGroup ? selectedGroup.nodes.map(item => nodes[item.node_id]).filter(Boolean) : []
+  const detailNodes = boundNode ? [boundNode] : selectedGroup?.nodes.map(item => nodes[item.node_id]).filter(Boolean) ?? []
   const profileCard = selectedProfile
     ? { id: selectedProfile.id, name: selectedProfile.name, running: activeRunning.has(selectedProfile.id), boundNodeId: selectedBinding?.node_id ?? null }
     : null
   const jobActive = job && (job.state === 'queued' || job.state === 'running')
 
   return (
-    <div className="flex h-full flex-col bg-canvas">
-      <header className="sticky top-0 z-20 flex min-h-[54px] flex-wrap items-center gap-2.5 border-b border-line bg-canvas/85 px-5 py-2 backdrop-blur-xl app-drag">
-        <div className="flex flex-wrap items-center gap-2.5 flex-1 app-no-drag">
+    <div className="flex min-h-full flex-col bg-canvas xl:h-full">
+      <header className="top-0 z-20 flex min-h-[54px] flex-wrap items-center gap-2.5 border-b border-line bg-canvas/85 px-3 py-2 backdrop-blur-xl sm:px-5 xl:sticky app-drag">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5 app-no-drag">
         <h1 className="text-[15px] font-semibold tracking-tight text-ink">{t('Node map')}</h1>
         <select className="field h-[30px] w-auto max-w-[220px] bg-surface/90 py-0 text-[12.5px]" aria-label={t('Node source')} value={activeSource} onChange={event => chooseSource(event.target.value)}>
           <option value="all">{t('All node sources')}</option>
@@ -447,12 +511,29 @@ export default function NetworkMapPage() {
           {map ? `${counts.placed}/${counts.total}` : '—'}
         </span>
 
-        <div className="relative ml-1 min-w-[160px] max-w-[260px] flex-1">
+        <div className="relative min-w-0 basis-full sm:ml-1 sm:min-w-[160px] sm:max-w-[260px] sm:flex-1">
           <Search size={13} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-          <input className="field h-[30px] bg-surface/90 py-0 pl-8 text-[12.5px]" aria-label={t('Search nodes, countries, cities or IPs')} placeholder={t('Search nodes, countries, cities or IPs')} value={search} onChange={event => setSearch(event.target.value)} />
+          <input
+            className="field h-[30px] bg-surface/90 py-0 pl-8 text-[12.5px]"
+            aria-label={t('Search nodes, countries, cities or IPs')}
+            placeholder={t('Search nodes, countries, cities or IPs')}
+            value={search}
+            onChange={event => {
+              setSearch(event.target.value)
+              if (selection.kind === 'binding') setSelection(ALL_LOCATIONS)
+            }}
+          />
         </div>
 
-        <select className="field h-[30px] w-auto bg-surface/90 py-0 text-[12.5px]" aria-label={t('Filter by health')} value={health} onChange={event => setHealth(event.target.value as typeof health)}>
+        <select
+          className="field h-[30px] w-auto bg-surface/90 py-0 text-[12.5px]"
+          aria-label={t('Filter by health')}
+          value={health}
+          onChange={event => {
+            setHealth(event.target.value as typeof health)
+            if (selection.kind === 'binding') setSelection(ALL_LOCATIONS)
+          }}
+        >
           <option value="all">{t('All nodes')}</option>
           <option value="ok">{t('Reachable only')}</option>
           <option value="error">{t('Failed only')}</option>
@@ -501,7 +582,7 @@ export default function NetworkMapPage() {
         <EmptyState icon={<Globe2 size={18} />} title={t('Cannot load the network map')} body={t(error)} action={<button type="button" className="btn btn-default" onClick={load}>{t('Retry')}</button>} />
       ) : loading ? (
         <p className="px-5 py-8 text-ink-dim" role="status">{t('Loading…')}</p>
-      ) : !map?.total_nodes ? (
+      ) : !map?.total_nodes && !boundNode ? (
         <EmptyState
           icon={<Globe2 size={18} />}
           title={t('No nodes yet')}
@@ -509,7 +590,7 @@ export default function NetworkMapPage() {
           action={<Link className="btn btn-primary" href="/subscriptions/">{t('Add a subscription')}</Link>}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
+        <div className="flex flex-1 flex-col xl:min-h-0 xl:flex-row">
           {/* Left Browser List for quick binding */}
           <aside className="order-2 max-h-[36vh] shrink-0 overflow-y-auto border-b border-line bg-sidebar/80 xl:order-none xl:max-h-none xl:w-[244px] xl:border-b-0 xl:border-r" aria-label={t('Browsers')}>
             <p className="sticky top-0 z-10 border-b border-line bg-sidebar/95 px-4 py-2 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink-faint backdrop-blur">
@@ -526,18 +607,29 @@ export default function NetworkMapPage() {
                   <li key={profile.id} className={`relative border-b border-line/60 transition-colors ${isSelected ? 'bg-signal-shade/85' : 'hover:bg-raised/45'}`}>
                     {isSelected && <span className="absolute bottom-1.5 left-0 top-1.5 w-[2.5px] rounded-r-full bg-signal" aria-hidden="true" />}
                     <div className="flex items-start gap-2 px-3 py-2.5">
-                      <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => setSelectedProfileId(isSelected ? null : profile.id)} aria-pressed={isSelected}>
-                        <span className="flex items-center gap-1.5">
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${isRunning ? (runtime?.state === 'degraded' ? 'bg-danger-dot' : 'bg-ok-dot signal-pulse') : 'bg-slate-300'}`} aria-hidden="true" />
-                          <span className="truncate font-medium text-ink">{profile.name}</span>
-                        </span>
-                        <span className="mt-0.5 block truncate text-[11px] text-ink-dim">
-                          {binding ? `${flag(binding.node.check?.country_iso)} ${binding.node.name}` : t('No node bound')}
-                        </span>
+                      <div className="min-w-0 flex-1">
+                        <button type="button" className="block w-full cursor-pointer text-left" onClick={() => selectProfile(isSelected ? null : profile.id)} aria-pressed={isSelected}>
+                          <span className="flex items-center gap-1.5">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${isRunning ? (runtime?.state === 'degraded' ? 'bg-danger-dot' : 'bg-ok-dot signal-pulse') : 'bg-slate-300'}`} aria-hidden="true" />
+                            <span className="truncate font-medium text-ink">{profile.name}</span>
+                          </span>
+                          {!binding && <span className="mt-0.5 block text-[11px] text-ink-dim">{t('No node bound')}</span>}
+                        </button>
+                        {binding && (
+                          <button
+                            type="button"
+                            className="mt-0.5 block max-w-full cursor-pointer truncate text-left text-[11px] text-signal underline-offset-2 hover:underline"
+                            onClick={() => selectProfile(profile.id)}
+                            aria-label={t('Show {node} on map', { node: binding.node.name })}
+                            title={t('Show {node} on map', { node: binding.node.name })}
+                          >
+                            {flag(binding.node.check?.country_iso)} {binding.node.name}
+                          </button>
+                        )}
                         {binding && !binding.usable && <span className="block text-[11px] text-danger">{t('Node retired: bind another')}</span>}
                         {isRunning && runtime?.state === 'degraded' && <span className="block text-[11px] text-danger">{t('Network down: traffic is blocked')}</span>}
                         {isRunning && runtime?.exit_ip && <span className="block font-mono text-[11px] text-ink-faint">{maskIp(runtime.exit_ip, maskIps)}</span>}
-                      </button>
+                      </div>
                       <button
                         type="button"
                         className="btn btn-ghost h-[26px] w-[26px] shrink-0 p-0"
@@ -557,11 +649,12 @@ export default function NetworkMapPage() {
           </aside>
 
           {/* Center Map */}
-          <section className="relative order-1 h-[54vh] min-h-[340px] flex-1 border-b border-line xl:order-none xl:h-auto xl:border-b-0" aria-label={t('Map')}>
+          <section ref={mapSection} className="relative order-1 h-[44vh] min-h-[340px] shrink-0 border-b border-line xl:order-none xl:h-auto xl:flex-1 xl:border-b-0" aria-label={t('Map')}>
             <WorldMap
               mode="manage"
               groups={locationGroups}
-              selectedKey={selectedKey}
+              selectedKey={selectedGroup?.key ?? null}
+              selectedNodeId={boundNodeId}
               onSelect={key => selectGroup(key)}
               focusToken={focusToken}
               fitKey={activeSource}
@@ -588,21 +681,23 @@ export default function NetworkMapPage() {
                     {selectedBinding && <button type="button" className="btn btn-ghost h-[24px] px-2 text-[11.5px]" onClick={unbind} disabled={activeRunning.has(selectedProfile.id)}>{t('Unbind')}</button>}
                   </div>
                 </div>
-                <p className="text-[11.5px] text-ink-dim">
-                  {selectedBinding ? t('Bound to {node}', { node: selectedBinding.node.name }) : t('Choose a location, then bind one of its nodes.')}
-                </p>
+                {selectedBinding ? (
+                  <button type="button" className="max-w-full cursor-pointer truncate text-left text-[11.5px] text-signal underline-offset-2 hover:underline" onClick={() => selectProfile(selectedProfile.id)} title={t('Show {node} on map', { node: selectedBinding.node.name })}>
+                    {t('Bound to {node}', { node: selectedBinding.node.name })}
+                  </button>
+                ) : <p className="text-[11.5px] text-ink-dim">{t('Choose a location, then bind one of its nodes.')}</p>}
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {selectedGroup ? (
+            <div ref={detailList} className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+              {boundNode || selectedGroup ? (
                 <>
                   <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-sidebar/95 px-4 py-2.5 backdrop-blur">
-                    <button type="button" className="btn btn-ghost h-[26px] w-[26px] p-0" onClick={() => setSelectedKey(null)} aria-label={t('All locations')} title={t('All locations')}>
+                    <button type="button" className="btn btn-ghost h-[26px] w-[26px] p-0" onClick={() => setSelection(ALL_LOCATIONS)} aria-label={t('All locations')} title={t('All locations')}>
                       <ArrowLeft size={13} />
                     </button>
                     <div className="min-w-0">
-                      <p className="truncate font-semibold text-ink">{groupTitle(selectedGroup, locale, t)}</p>
-                      <p className="text-[11px] text-ink-dim">{t('{count} nodes at these coordinates', { count: selectedGroup.nodes.length })}</p>
+                      <p className="truncate font-semibold text-ink">{selectedGroup ? groupTitle(selectedGroup, locale, t) : t('Location unknown')}</p>
+                      {!boundNode && selectedGroup && <p className="text-[11px] text-ink-dim">{t('{count} nodes at these coordinates', { count: selectedGroup.nodes.length })}</p>}
                     </div>
                   </div>
                   {detailNodes.map(node => (
@@ -611,7 +706,7 @@ export default function NetworkMapPage() {
                       node={node}
                       maskIps={maskIps}
                       expanded={expanded === node.id}
-                      onToggle={() => setExpanded(expanded === node.id ? null : node.id)}
+                      onToggle={() => toggleExpanded(node.id)}
                       busy={busyNodes.has(node.id)}
                       selectedProfile={profileCard}
                       onCheck={refresh => checkNode(node.id, refresh)}
@@ -652,7 +747,7 @@ export default function NetworkMapPage() {
                               node={node}
                               maskIps={maskIps}
                               expanded={expanded === item.node_id}
-                              onToggle={() => setExpanded(expanded === item.node_id ? null : item.node_id)}
+                              onToggle={() => toggleExpanded(item.node_id)}
                               busy={busyNodes.has(item.node_id)}
                               selectedProfile={profileCard}
                               onCheck={refresh => checkNode(item.node_id, refresh)}

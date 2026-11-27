@@ -911,20 +911,25 @@ export default function BrowsersWorkspacePage() {
                   }`}>
                     {binding ? (
                       <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
+                        <Link
+                          href={`/map/?profile=${encodeURIComponent(profile.id)}`}
+                          className="group/node min-w-0 flex-1 rounded-md"
+                          aria-label={t('Show {node} on map', { node: binding.node.name })}
+                          title={t('Show {node} on map', { node: binding.node.name })}
+                        >
+                          <span className="flex items-center gap-1.5">
                             <span className="text-[14px] leading-none" aria-hidden="true">{flag(binding.node.check?.country_iso) || '🌐'}</span>
-                            <span className="truncate text-[12.5px] font-medium text-ink" title={binding.node.name}>
+                            <span className="truncate text-[12.5px] font-medium text-signal underline-offset-2 group-hover/node:underline">
                               {binding.node.name}
                             </span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-dim">
+                          </span>
+                          <span className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-dim">
                             <span className="font-mono text-ink">
                               {maskIp(binding.runtime?.exit_ip ?? binding.node.check?.exit_ip, maskIps)}
                             </span>
                             {binding.node.check?.city && <span className="truncate text-ink-faint">{binding.node.check.city}</span>}
-                          </div>
-                        </div>
+                          </span>
+                        </Link>
                         {degraded ? (
                           <button type="button" className="btn btn-danger h-[26px] px-2 text-[11px]" onClick={() => reconnectNode(profile)} disabled={isBusy}>
                             <RefreshCw size={11} aria-hidden="true" />
@@ -1129,13 +1134,18 @@ export default function BrowsersWorkspacePage() {
                       </td>
                       <td className="px-3 py-2.5 text-[12px]">
                         {binding ? (
-                          <div>
-                            <p className="font-medium text-ink">{flag(binding.node.check?.country_iso)} {binding.node.name}</p>
-                            <p className="font-mono text-[11px] text-ink-dim">
+                          <Link
+                            href={`/map/?profile=${encodeURIComponent(profile.id)}`}
+                            className="group/node block rounded-md"
+                            aria-label={t('Show {node} on map', { node: binding.node.name })}
+                            title={t('Show {node} on map', { node: binding.node.name })}
+                          >
+                            <span className="block font-medium text-signal underline-offset-2 group-hover/node:underline">{flag(binding.node.check?.country_iso)} {binding.node.name}</span>
+                            <span className="block font-mono text-[11px] text-ink-dim">
                               {maskIp(binding.runtime?.exit_ip ?? binding.node.check?.exit_ip, maskIps)}
                               {binding.node.check?.latency_ms != null ? ` · ${binding.node.check.latency_ms} ms` : ''}
-                            </p>
-                          </div>
+                            </span>
+                          </Link>
                         ) : (
                           <Link href={`/map/?profile=${encodeURIComponent(profile.id)}`} className="text-[12px] text-signal hover:underline">{t('Bind on map')}</Link>
                         )}
