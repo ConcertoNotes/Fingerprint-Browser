@@ -148,6 +148,41 @@ function pickLegacyDataDir(candidates) {
 }
 
 /**
+ * Recursive copy built from basic fs calls. fs.cpSync is avoided on purpose:
+ * its native implementation mangles non-ASCII paths (such as this app's
+ * Chinese directory name) on Windows.
+ */
+function copyTree(src, dest, { overwrite = false } = {}) {
+  const st = fs.lstatSync(src);
+  if (st.isSymbolicLink()) {
+    if (!fs.existsSync(dest)) {
+      fs.symlinkSync(fs.readlinkSync(src), dest);
+    }
+    return;
+  }
+  if (st.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true, mode: st.mode & 0o777 });
+    for (const entry of fs.readdirSync(src)) {
+      copyTree(path.join(src, entry), path.join(dest, entry), { overwrite });
+    }
+    return;
+  }
+  if (!st.isFile()) {
+    return; // sockets, FIFOs
+  }
+  if (!overwrite && fs.existsSync(dest)) {
+    return;
+  }
+  fs.copyFileSync(src, dest);
+  try {
+    fs.chmodSync(dest, st.mode & 0o777);
+    fs.utimesSync(dest, st.atime, st.mtime);
+  } catch {
+    // best effort
+  }
+}
+
+/**
  * Copy (never move) a legacy data directory into the stable one. The source
  * is left untouched as a fallback copy. Refuses to run when the stable
  * directory already holds a database, so existing data is never overwritten.
@@ -168,13 +203,7 @@ function adoptLegacyDataDir(sourceDir, stableDir) {
     if (!isCore && fs.existsSync(target)) {
       continue;
     }
-    fs.cpSync(path.join(sourceDir, entry), target, {
-      recursive: true,
-      force: isCore,
-      errorOnExist: false,
-      preserveTimestamps: true,
-      verbatimSymlinks: true,
-    });
+    copyTree(path.join(sourceDir, entry), target, { overwrite: isCore });
   }
   // A WAL/SHM from the stable dir must not be paired with the legacy DB.
   for (const name of ["profiles.db-wal", "profiles.db-shm"]) {
