@@ -163,3 +163,26 @@ the production trust and publisher checks that remain specific to automatic repl
 Prerelease tags are excluded from the optional PyPI publish job. The application's
 stable update checker also intentionally excludes prereleases; preview testers
 download them explicitly from GitHub.
+
+## Desktop background updates (rolling releases)
+
+Every push to `main` runs `.github/workflows/windows-release.yml`, which builds
+Windows x64 and macOS arm64 installers versioned `<major>.<minor>.<run number>`
+(`PRISM_APP_VERSION`, passed to electron-builder as `extraMetadata.version`) and
+publishes them to the `windows-latest` and `macos-latest` releases together with
+`prism-update-<platform>-<arch>.json` (version, file, size, SHA-256).
+
+Installed apps (`electron/updater.js`) check that manifest 20 s after start and
+every 4 h, download the installer into `<userData>/updates/`, verify size and
+SHA-256, and install it when the app quits; the prompt also offers an immediate
+restart. macOS swaps the staged `.app` in after the process exits (the app must
+be in a writable location such as `/Applications`); Windows runs the NSIS
+installer with `/S`. The manifest hash is only an integrity check against the
+same release, not a publisher signature.
+
+User data lives in a fixed directory (`~/Library/Application Support/棱镜浏览器`,
+`%APPDATA%\棱镜浏览器`, `~/.config/棱镜浏览器`) that does not follow the brand name
+and is never inside the app bundle, so reinstalling or updating keeps profiles,
+nodes and subscriptions. On each version change the previous `profiles.db` and
+key are copied to `upgrade-backups/` (newest five kept). Override with
+`PRISM_UPDATE_URL`, or disable with `PRISM_DISABLE_AUTO_UPDATE=1`.

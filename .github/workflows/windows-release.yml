@@ -75,6 +75,12 @@ jobs:
           assert payload["routes"] > 0, payload
           ' "$OUT"
 
+      - name: Compute rolling app version
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
+          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Package Windows x64 NSIS installer
         run: uv run --no-sync python scripts/build_desktop.py --package-only
 
@@ -86,6 +92,7 @@ jobs:
           CHECKSUM_FILE="${INSTALLER}.sha256"
           test -f "$INSTALLER"
           test -f "$CHECKSUM_FILE"
+          test -f dist/prism-update-win32-x64.json
 
           uv run --no-sync python - <<'PY'
           import os
@@ -115,6 +122,7 @@ jobs:
 
               ### 构建信息 / Build Metadata
               - **安装包 / Installer**: `{installer.name}` ({size_mb:.1f} MB)
+              - **版本 / Version**: `{os.environ["PRISM_APP_VERSION"]}`（已安装的客户端会在后台自动下载并在退出时安装 / installed apps update in the background）
               - **提交 / Commit**: `{short_sha}` (`{commit_sha}`)
               - **提交说明 / Message**: {commit_msg}
               - **构建时间 / Built At**: `{built_at}`
@@ -145,6 +153,7 @@ jobs:
           files: |
             dist/*-setup.exe
             dist/*-setup.exe.sha256
+            dist/prism-update-win32-x64.json
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
@@ -154,3 +163,91 @@ jobs:
           path: |
             dist/*-setup.exe
             dist/*-setup.exe.sha256
+
+  build-and-release-macos:
+    name: Build & Publish macOS arm64 DMG
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            electron/package-lock.json
+
+      - name: Setup uv and Python 3.12
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install Python sidecar build dependencies
+        run: uv sync --extra build
+
+      - name: Install Electron dependencies and run unit tests
+        working-directory: electron
+        run: |
+          npm ci
+          npm test
+
+      - name: Prepare compact offline runtime (proxy engine + GeoIP)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/prepare_bundled_runtime.py
+
+      - name: Build static WebUI and slim Python sidecar
+        run: uv run --no-sync python scripts/build_desktop.py --sidecar-only --skip-runtime
+
+      - name: Verify macOS sidecar self-check
+        run: ./build/prism-backend/prism-backend --self-check
+
+      - name: Compute rolling app version
+        run: |
+          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
+          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Package macOS arm64 DMG
+        run: uv run --no-sync python scripts/build_desktop.py --package-only
+
+      - name: Verify DMG and update macos-latest tag
+        run: |
+          set -euo pipefail
+          test -f dist/prism-browser-macos-arm64.dmg
+          test -f dist/prism-update-darwin-arm64.json
+          SHA=$(cut -d' ' -f1 dist/prism-browser-macos-arm64.dmg.sha256)
+          cat > dist/release-notes-macos.md <<NOTES
+          ## 棱镜浏览器 macOS 安装包 (Latest) / Prism Browser macOS arm64
+
+          每次推送至 \`main\` 后自动构建。已安装的客户端会在后台检查、下载并校验新版本，退出应用时自动安装；用户数据保存在独立的数据目录中，不会因更新丢失。
+
+          - **版本 / Version**: \`${PRISM_APP_VERSION}\`
+          - **提交 / Commit**: \`${GITHUB_SHA::7}\`
+          - **SHA-256**: \`${SHA}\`
+
+          首次安装未签名应用：右键「打开」，或执行 \`xattr -dr com.apple.quarantine /Applications/棱镜浏览器.app\`。
+          NOTES
+          git tag -f macos-latest "$GITHUB_SHA"
+          git push -f origin macos-latest
+
+      - name: Publish macOS DMG to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: macos-latest
+          name: "棱镜浏览器 macOS 安装包 (Latest)"
+          body_path: dist/release-notes-macos.md
+          draft: false
+          prerelease: false
+          make_latest: false
+          files: |
+            dist/prism-browser-macos-arm64.dmg
+            dist/prism-browser-macos-arm64.dmg.sha256
+            dist/prism-update-darwin-arm64.json

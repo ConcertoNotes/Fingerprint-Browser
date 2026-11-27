@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,8 @@ DISTRIBUTION_DIR = BUILD / "distribution"
 
 DEFAULT_BRAND_NAME = "棱镜浏览器"
 INSTALLER_SUFFIXES = (".dmg", ".exe", ".deb", ".tar.gz", ".AppImage")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+UPDATE_MANIFEST_PREFIX = "prism-update-"
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 
@@ -141,14 +144,34 @@ def write_distribution_config(
     return config_path
 
 
+def electron_package_version() -> str:
+    data = json.loads((ELECTRON_DIR / "package.json").read_text(encoding="utf-8"))
+    return str(data["version"])
+
+
+def resolve_app_version(raw: str | None) -> str | None:
+    """Validate an ``x.y.z`` app version override (``--app-version`` / ``PRISM_APP_VERSION``)."""
+    cleaned = (raw or "").strip().removeprefix("v")
+    if not cleaned:
+        return None
+    if not VERSION_RE.match(cleaned):
+        raise ValueError(f"App version must look like 1.2.3, got {raw!r}")
+    return cleaned
+
+
 def build_electron_builder_command(
     *,
     package: bool,
     edition: str = "standard",
     brand_name: str = DEFAULT_BRAND_NAME,
+    app_version: str | None = None,
 ) -> list[str]:
     """Construct the ``electron-builder`` CLI command with optional customer/brand overrides."""
     cmd = [*_electron_builder_cmd(), "--config", "electron-builder.yml"]
+    if app_version:
+        # Each published build needs a strictly increasing version so installed
+        # apps can tell that an update is newer.
+        cmd.append(f"-c.extraMetadata.version={app_version}")
     if not package:
         cmd.append("--dir")
     elif sys.platform == "darwin":
@@ -221,6 +244,7 @@ def run_electron_builder(
     package: bool,
     edition: str = "standard",
     brand_name: str = DEFAULT_BRAND_NAME,
+    app_version: str | None = None,
 ) -> list[Path]:
     """Run ``electron-builder`` to produce either an unpacked dir or final OS installers."""
     ensure_electron_dependencies()
@@ -241,13 +265,16 @@ def run_electron_builder(
         package=package,
         edition=edition,
         brand_name=brand_name,
+        app_version=app_version,
     )
 
     # Clean stale prior installers from previous architectures/builds.
     DIST.mkdir(parents=True, exist_ok=True)
     if package:
         for stale in list(DIST.iterdir()):
-            if stale.name.endswith((".sha256", ".blockmap", ".yml")):
+            if stale.name.endswith((".sha256", ".blockmap", ".yml")) or (
+                stale.name.startswith(UPDATE_MANIFEST_PREFIX) and stale.name.endswith(".json")
+            ):
                 stale.unlink(missing_ok=True)
         stale_dirs = {f"{DEFAULT_BRAND_NAME}.app", "camoufox-pm"}
         if brand_name.strip():
@@ -288,6 +315,55 @@ def write_checksums(files: list[Path]) -> None:
                 digest.update(chunk)
         checksum.write_text(f"{digest.hexdigest()}  {path.name}\n", encoding="utf-8")
         print(f"[sha256] {checksum.name}: {digest.hexdigest()}")
+
+
+def _update_target(installer: Path) -> tuple[str, str] | None:
+    """Map an installer file name to the (platform, arch) the desktop updater asks for."""
+    name = installer.name
+    if name.endswith(".dmg"):
+        plat = "darwin"
+    elif name.endswith("-setup.exe"):
+        plat = "win32"
+    else:
+        return None
+    match = re.search(r"-(arm64|x64|ia32|universal)(?:-setup)?\.(?:dmg|exe)$", name)
+    if not match:
+        return None
+    return plat, match.group(1)
+
+
+def write_update_manifests(
+    files: list[Path], version: str, *, released_at: str | None = None
+) -> list[Path]:
+    """Write ``prism-update-<platform>-<arch>.json`` next to each .dmg / -setup.exe.
+
+    Publish these alongside the installers in the rolling release; installed
+    apps poll them to download updates in the background.
+    """
+    from datetime import UTC, datetime
+
+    stamp = released_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    written: list[Path] = []
+    for installer in files:
+        target = _update_target(installer)
+        if target is None:
+            continue
+        digest = hashlib.sha256()
+        with installer.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        manifest = installer.with_name(f"{UPDATE_MANIFEST_PREFIX}{target[0]}-{target[1]}.json")
+        payload = {
+            "version": version,
+            "file": installer.name,
+            "sha256": digest.hexdigest(),
+            "size": installer.stat().st_size,
+            "released_at": stamp,
+        }
+        manifest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"[update] {manifest.name}: {version} -> {installer.name}")
+        written.append(manifest)
+    return written
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -344,6 +420,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Desktop application brand / window title (default: {DEFAULT_BRAND_NAME})",
     )
     parser.add_argument(
+        "--app-version",
+        default=os.environ.get("PRISM_APP_VERSION"),
+        help="Override the packaged app version (x.y.z); defaults to electron/package.json "
+        "or $PRISM_APP_VERSION. Published update builds must use increasing versions.",
+    )
+    parser.add_argument(
         "--require-activation",
         action="store_true",
         help="Require license activation before dismissing first-run activation modal in customer edition",
@@ -369,6 +451,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     brand_name = (args.brand_name or "").strip() or DEFAULT_BRAND_NAME
+    try:
+        app_version = resolve_app_version(args.app_version)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if not args.package_only:
         if not args.skip_webui:
@@ -394,9 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         package=args.package or args.package_only,
         edition=args.edition,
         brand_name=brand_name,
+        app_version=app_version,
     )
     if args.package or args.package_only:
         write_checksums(files)
+        if args.edition == "standard":
+            write_update_manifests(files, app_version or electron_package_version())
     print("Desktop build complete - see dist/")
     return 0
 

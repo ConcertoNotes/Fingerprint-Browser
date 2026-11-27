@@ -19,6 +19,8 @@ const {
   isCustomerDevToolsShortcut,
 } = require("./sidecar");
 const { WorkspaceManager } = require("./workspace-manager");
+const { resolveUserDataDir, backupOnVersionChange } = require("./data-dir");
+const { UpdateManager } = require("./updater");
 const { buildStartupSplashDataUrl } = require("./error-page");
 
 // CLI fast-path for --version (useful for packaging verification)
@@ -33,13 +35,21 @@ const distribution = loadDistributionConfig({
   repoRoot: path.resolve(__dirname, ".."),
 });
 const brandName = distribution.brand_name || "棱镜浏览器";
+const isCustomerEdition = distribution.edition === "customer";
 const isCustomerPackaged = distribution.edition === "customer" && app.isPackaged;
 
 app.setName(brandName);
 
-if (process.env.PRISM_USER_DATA_DIR) {
-  app.setPath("userData", path.resolve(process.env.PRISM_USER_DATA_DIR));
-}
+// Pin userData to a fixed directory that never follows the brand name, so a
+// rename or a new build never starts on an empty data directory. Data left by
+// earlier app names is copied in once (the old directory is kept untouched).
+const { userDataDir: resolvedUserDataDir, adoptedFrom } = resolveUserDataDir({
+  appDataDir: app.getPath("appData"),
+  brandName,
+  overrideDir: process.env.PRISM_USER_DATA_DIR || "",
+  log: (msg) => process.stderr.write(`[data-dir] ${msg}\n`),
+});
+app.setPath("userData", resolvedUserDataDir);
 
 // =============================================================================
 // CRITICAL PROCESS-LEVEL ANTI-LEAK SWITCHES (MUST BE APPLIED BEFORE whenReady)
@@ -62,6 +72,8 @@ let sidecar = null;
 let workspaceManager = null;
 let trustedShellOrigin = null;
 let isShuttingDown = false;
+let updater = null;
+let restartForUpdate = false;
 
 function isTrustedShellSender(event) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -153,6 +165,7 @@ function buildAppMenu() {
             label: brandName,
             submenu: [
               { role: "about", label: `关于${brandName}` },
+              { label: "检查更新…", click: () => updater && updater.checkNow({ interactive: true }) },
               { type: "separator" },
               { role: "services", label: "服务" },
               { type: "separator" },
@@ -196,6 +209,16 @@ function buildAppMenu() {
         ...(isMac ? [{ type: "separator" }, { role: "front", label: "前置全部窗口" }] : []),
       ],
     },
+    ...(!isMac
+      ? [
+          {
+            label: "帮助",
+            submenu: [
+              { label: "检查更新…", click: () => updater && updater.checkNow({ interactive: true }) },
+            ],
+          },
+        ]
+      : []),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -275,6 +298,9 @@ async function shutdownGracefully() {
     return;
   }
   isShuttingDown = true;
+  if (updater) {
+    updater.stop();
+  }
   try {
     if (workspaceManager) {
       await workspaceManager.closeAll();
@@ -309,6 +335,20 @@ if (!singleLock) {
     mainWindow = createMainWindow();
 
     const userDataDir = app.getPath("userData");
+    if (adoptedFrom) {
+      process.stderr.write(`[data-dir] Using data adopted from ${adoptedFrom}\n`);
+    }
+    try {
+      // Snapshot profiles.db + key before this version opens (and migrates) it.
+      const backup = backupOnVersionChange(userDataDir, app.getVersion());
+      if (backup) {
+        process.stderr.write(`[data-dir] Pre-upgrade backup written to ${backup}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[data-dir] Pre-upgrade backup failed: ${err instanceof Error ? err.message : String(err)}\n`
+      );
+    }
     sidecar = new SidecarManager({
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -329,12 +369,28 @@ if (!singleLock) {
 
     registerIpcHandlers();
 
+    updater = new UpdateManager({
+      app,
+      dialog,
+      getWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
+      userDataDir,
+      brandName,
+      feedUrl: process.env.PRISM_UPDATE_URL || undefined,
+      enabled: !isCustomerEdition && !process.env.PRISM_DISABLE_AUTO_UPDATE,
+      log: (msg) => process.stderr.write(`[updater] ${msg}\n`),
+    });
+    updater.onRestartRequested = () => {
+      restartForUpdate = true;
+      app.quit();
+    };
+
     try {
       const baseUrl = await sidecar.start();
       trustedShellOrigin = new URL(baseUrl).origin;
       if (mainWindow && !mainWindow.isDestroyed()) {
         await mainWindow.loadURL(`${baseUrl}/`);
       }
+      updater.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       dialog.showErrorBox(`${brandName}启动失败`, `本地隔离核心服务启动异常：\n\n${message}`);
@@ -349,6 +405,14 @@ if (!singleLock) {
       shutdownGracefully().finally(() => {
         app.quit();
       });
+    }
+  });
+
+  app.on("will-quit", () => {
+    // Runs after profiles and the sidecar have shut down. The installer helper
+    // waits for this process to exit before it replaces the app bundle.
+    if (updater && updater.hasPendingUpdate()) {
+      updater.launchInstaller({ relaunch: restartForUpdate });
     }
   });
 

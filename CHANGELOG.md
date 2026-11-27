@@ -10,6 +10,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased — 噜噜指纹浏览器
 
+- Desktop data no longer disappears after installing a new build: the data
+  directory is pinned to a fixed name instead of following the brand name, data
+  left under earlier names (including the Python desktop's
+  `Camoufox Profile Manager` folder) is copied in once when the fixed directory is
+  empty, and every version change snapshots `profiles.db` and the key into
+  `upgrade-backups/` before the new version opens them.
+- Background updates: installed desktop apps poll `prism-update-<platform>-<arch>.json`
+  on the rolling `macos-latest` / `windows-latest` releases, download and verify the
+  installer, and install it when the app quits (or on "立即重启更新"). Rolling builds
+  are versioned `<major>.<minor>.<run number>`. Customer editions do not self-update;
+  set `PRISM_DISABLE_AUTO_UPDATE=1` to opt out.
 - Clash/Mihomo subscriptions, per-profile Mihomo routing with no direct fallback,
   measured exit locations on an offline world map and IP-quality checks
   (see `docs/network-architecture.md`).

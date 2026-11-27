@@ -16,6 +16,8 @@ files:
   - "omnibox.js"
   - "error-page.js"
   - "cookies.js"
+  - "data-dir.js"
+  - "updater.js"
   - "package.json"
   - "!tests/**"
   - "!**/*.test.js"

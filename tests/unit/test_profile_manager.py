@@ -251,3 +251,25 @@ async def test_refreshing_keeps_pinned_os_and_hardware_while_updating_chrome_maj
     assert "Windows NT 10.0" in refreshed.fingerprint["user_agent"]
     assert refreshed.fingerprint["webgl_renderer"] == PINNED["webgl_renderer"]
     assert refreshed.fingerprint["canvas_seed"] == PINNED["canvas_seed"]
+
+
+@pytest.mark.asyncio
+async def test_absolute_paths_from_an_adopted_data_directory_are_re_pointed(
+    profile_manager, tmp_path
+):
+    profile = await profile_manager.create_profile(name="adopted")
+    own_dir = profile_manager.profiles_dir.resolve() / f"profile_{profile.id}"
+    own_dir.mkdir(parents=True, exist_ok=True)
+    old_location = tmp_path / "Old App Name" / "profiles" / f"profile_{profile.id}"
+    conn = profile_manager.storage.db._connection
+    conn.execute(
+        "UPDATE profiles SET storage_path = ? WHERE id = ?", (str(old_location), profile.id)
+    )
+    conn.commit()
+
+    assert profile_manager._relocate_moved_storage_paths() == 1
+    reloaded = await profile_manager.get_profile(profile.id)
+    assert reloaded is not None
+    assert Path(reloaded.storage_path) == own_dir
+    # Idempotent: a second pass changes nothing.
+    assert profile_manager._relocate_moved_storage_paths() == 0

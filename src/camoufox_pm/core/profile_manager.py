@@ -141,9 +141,55 @@ class ProfileManager:
     async def initialize(self):
         """Initialize the profile manager and its database."""
         await self.storage.initialize()
+        self._relocate_moved_storage_paths()
         self.browser_sessions.start_heartbeat()
         self.network.reap()
         logger.info("ProfileManager initialized")
+
+    def _relocate_moved_storage_paths(self) -> int:
+        """Re-point absolute ``storage_path`` values after the data directory moved.
+
+        The desktop shell may adopt a data directory from an older install (for
+        example after a brand/app-name change). Stored absolute paths then still
+        point at the old location. Only rows whose own ``profile_<id>`` directory
+        exists under the current ``profiles_dir`` are rewritten.
+        """
+        conn = getattr(getattr(self.storage, "db", None), "_connection", None)
+        if conn is None:
+            return 0
+        root = self.profiles_dir.resolve()
+        try:
+            rows = conn.execute(
+                "SELECT id, storage_path FROM profiles WHERE storage_path IS NOT NULL"
+            ).fetchall()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Skipping storage path relocation: {exc}")
+            return 0
+        moved = 0
+        for row in rows:
+            profile_id, stored = row[0], row[1]
+            stored_path = Path(stored)
+            if not stored_path.is_absolute():
+                continue
+            expected = root / f"profile_{profile_id}"
+            if stored_path.name != expected.name:
+                continue
+            try:
+                if stored_path.resolve().is_relative_to(root):
+                    continue
+            except OSError:
+                pass
+            if not expected.is_dir() or expected.is_symlink():
+                continue
+            conn.execute(
+                "UPDATE profiles SET storage_path = ? WHERE id = ?",
+                (str(expected), profile_id),
+            )
+            moved += 1
+        if moved:
+            conn.commit()
+            logger.info(f"Re-pointed {moved} profile storage path(s) to {root}")
+        return moved
 
     def active_policy(self) -> tuple[IsolationPolicy, str]:
         """Return ``(policy, source)`` for the currently active fixed-optimization policy."""
