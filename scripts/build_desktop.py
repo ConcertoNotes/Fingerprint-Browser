@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ BACKEND_DIR = BUILD / "prism-backend"
 DISTRIBUTION_DIR = BUILD / "distribution"
 
 DEFAULT_BRAND_NAME = "棱镜浏览器"
+STABLE_DATA_DIR_NAME = "棱镜浏览器"
+LOCAL_UPDATE_SOURCE_FILE = "local-update-source.json"
 INSTALLER_SUFFIXES = (".dmg", ".exe", ".deb", ".tar.gz", ".AppImage")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 UPDATE_MANIFEST_PREFIX = "prism-update-"
@@ -157,6 +160,126 @@ def resolve_app_version(raw: str | None) -> str | None:
     if not VERSION_RE.match(cleaned):
         raise ValueError(f"App version must look like 1.2.3, got {raw!r}")
     return cleaned
+
+
+def is_ci_environment(env: dict[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    return bool(source.get("CI") or source.get("GITHUB_ACTIONS"))
+
+
+def stable_user_data_dir(
+    *,
+    platform_name: str | None = None,
+    home_dir: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> Path:
+    """Return the stable desktop userData directory matching ``electron/data-dir.js``."""
+    plat = platform_name or sys.platform
+    home = home_dir or Path.home()
+    source = env if env is not None else os.environ
+    override = (source.get("PRISM_USER_DATA_DIR") or "").strip()
+    if override:
+        return Path(override).resolve()
+    if plat == "darwin":
+        return home / "Library" / "Application Support" / STABLE_DATA_DIR_NAME
+    if plat == "win32":
+        appdata = source.get("APPDATA") or str(home / "AppData" / "Roaming")
+        return Path(appdata) / STABLE_DATA_DIR_NAME
+    xdg = source.get("XDG_CONFIG_HOME") or str(home / ".config")
+    return Path(xdg) / STABLE_DATA_DIR_NAME
+
+
+def _parse_semver(raw: str | None) -> tuple[int, int, int] | None:
+    cleaned = (raw or "").strip().removeprefix("v")
+    if not VERSION_RE.match(cleaned):
+        return None
+    major, minor, patch = cleaned.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def _read_installed_mac_version(brand_name: str = DEFAULT_BRAND_NAME) -> str | None:
+    if sys.platform != "darwin":
+        return None
+    plist_path = Path("/Applications") / f"{brand_name}.app" / "Contents" / "Info.plist"
+    if not plist_path.is_file():
+        return None
+    try:
+        with plist_path.open("rb") as fh:
+            data = plistlib.load(fh)
+        val = data.get("CFBundleShortVersionString")
+        return str(val) if val else None
+    except Exception:
+        return None
+
+
+def resolve_local_auto_version(
+    *,
+    base_version: str,
+    dist_dir: Path,
+    user_data_dir: Path | None = None,
+    brand_name: str = DEFAULT_BRAND_NAME,
+    installed_version: str | None = None,
+) -> str:
+    """Pick the next strictly increasing ``major.minor.patch`` for local builds.
+
+    Considers ``electron/package.json``, existing manifests in ``dist/``,
+    ``userData/app-version.json``, and the currently installed macOS app bundle
+    (when sharing the same ``major.minor``), preventing local builds from
+    falling behind installed or remote CI builds.
+    """
+    base = _parse_semver(base_version)
+    if base is None:
+        raise ValueError(f"Base version must look like 1.2.3, got {base_version!r}")
+    major, minor, max_patch = base
+
+    candidates: list[str] = []
+    if dist_dir.is_dir():
+        for manifest_path in sorted(dist_dir.glob(f"{UPDATE_MANIFEST_PREFIX}*.json")):
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and isinstance(payload.get("version"), str):
+                    candidates.append(payload["version"])
+            except Exception:
+                pass
+
+    if user_data_dir is not None:
+        marker = user_data_dir / "app-version.json"
+        if marker.is_file():
+            try:
+                payload = json.loads(marker.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and isinstance(payload.get("version"), str):
+                    candidates.append(payload["version"])
+            except Exception:
+                pass
+
+    mac_ver = installed_version if installed_version is not None else _read_installed_mac_version(brand_name)
+    if mac_ver:
+        candidates.append(mac_ver)
+
+    for raw in candidates:
+        parsed = _parse_semver(raw)
+        if parsed and parsed[0] == major and parsed[1] == minor and parsed[2] > max_patch:
+            max_patch = parsed[2]
+
+    return f"{major}.{minor}.{max_patch + 1}"
+
+
+def register_local_update_source(dist_dir: Path, user_data_dir: Path | None = None) -> Path:
+    """Record ``dist/`` inside stable userData so installed apps can compare local dist vs remote."""
+    from datetime import UTC, datetime
+
+    target_dir = user_data_dir or stable_user_data_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    marker = target_dir / LOCAL_UPDATE_SOURCE_FILE
+    tmp_marker = target_dir / f".{LOCAL_UPDATE_SOURCE_FILE}.tmp.{os.getpid()}"
+    payload = {
+        "dist_dir": str(dist_dir.resolve()),
+        "updated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    tmp_marker.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_marker, marker)
+    print(f"[update] Registered local dist source: {marker} -> {payload['dist_dir']}")
+    return marker
 
 
 def build_electron_builder_command(
@@ -360,7 +483,9 @@ def write_update_manifests(
             "size": installer.stat().st_size,
             "released_at": stamp,
         }
-        manifest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        tmp_manifest = manifest.with_name(f".{manifest.name}.tmp.{os.getpid()}")
+        tmp_manifest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_manifest, manifest)
         print(f"[update] {manifest.name}: {version} -> {installer.name}")
         written.append(manifest)
     return written
@@ -456,6 +581,16 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
+    will_package = bool(args.package or args.package_only)
+    if app_version is None and will_package and not is_ci_environment():
+        app_version = resolve_local_auto_version(
+            base_version=electron_package_version(),
+            dist_dir=DIST,
+            user_data_dir=stable_user_data_dir(),
+            brand_name=brand_name,
+        )
+        print(f"[version] Auto-selected local build version: {app_version}")
+
     if not args.package_only:
         if not args.skip_webui:
             subprocess.run([sys.executable, str(ROOT / "scripts" / "build_webui.py")], check=True)
@@ -477,15 +612,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     files = run_electron_builder(
-        package=args.package or args.package_only,
+        package=will_package,
         edition=args.edition,
         brand_name=brand_name,
         app_version=app_version,
     )
-    if args.package or args.package_only:
+    if will_package:
         write_checksums(files)
         if args.edition == "standard":
             write_update_manifests(files, app_version or electron_package_version())
+            if not is_ci_environment():
+                register_local_update_source(DIST)
     print("Desktop build complete - see dist/")
     return 0
 

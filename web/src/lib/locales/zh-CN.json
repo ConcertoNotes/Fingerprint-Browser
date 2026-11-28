@@ -648,6 +648,8 @@
   "Description": "描述",
   "Desktop (standard tabs and controls)": "桌面模式（标准标签页和控件）",
   "Destination URL": "目标 URL",
+  "Developer tools": "开发者工具",
+  "Developer tools (F12)": "开发者工具 (F12)",
   "Device": "设备规格",
   "Device access revoked": "设备访问权限已撤销",
   "Device connected. Profiles remain blocked until their latest history and contents are verified.": "设备已连接。在最新历史和内容验证完成前，配置仍将被锁定。",

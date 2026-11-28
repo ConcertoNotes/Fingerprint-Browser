@@ -56,6 +56,8 @@ test("new tab and startup splash pages contain zero forbidden upstream strings",
   assert.ok(newTab.includes("棱镜浏览器"));
   assert.ok(newTab.includes("45.77.10.22"));
   assert.ok(newTab.includes("FP-AB12CD34"));
+  assert.ok(newTab.includes('href="https://proton.me/"'));
+  assert.ok(newTab.includes('href="https://claude.ai/"'));
   assert.ok(!FORBIDDEN_BRAND_RE.test(newTab));
 
   const splashUrl = buildStartupSplashDataUrl();

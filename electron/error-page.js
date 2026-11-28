@@ -440,6 +440,14 @@ function buildNewTabHtml({ exitIp = "", exitCountry = "", exitCity = "", fingerp
         <div class="shortcut-title">硬件指纹一致性检测</div>
         <div class="shortcut-host">browserleaks.com/canvas</div>
       </a>
+      <a class="shortcut" href="https://proton.me/">
+        <div class="shortcut-title">Proton 邮箱</div>
+        <div class="shortcut-host">proton.me</div>
+      </a>
+      <a class="shortcut" href="https://claude.ai/">
+        <div class="shortcut-title">Claude AI</div>
+        <div class="shortcut-host">claude.ai</div>
+      </a>
     </div>
   </main>
 </body>

@@ -7,7 +7,9 @@ const {
   WebContentsView,
   ipcMain,
   Menu,
+  clipboard,
   session,
+  net,
   dialog,
   shell,
   safeStorage,
@@ -18,7 +20,7 @@ const {
   loadDistributionConfig,
   isCustomerDevToolsShortcut,
 } = require("./sidecar");
-const { WorkspaceManager } = require("./workspace-manager");
+const { WorkspaceManager, isTabDevToolsShortcut } = require("./workspace-manager");
 const { resolveUserDataDir, backupOnVersionChange } = require("./data-dir");
 const { UpdateManager } = require("./updater");
 const { buildStartupSplashDataUrl } = require("./error-page");
@@ -146,6 +148,9 @@ function registerIpcHandlers() {
   handleTrusted("prism:stop", (profileId, tabId) => {
     workspaceManager.stop(profileId, tabId);
   });
+  handleTrusted("prism:toggle-devtools", (profileId, tabId) =>
+    workspaceManager.toggleDevTools(profileId, tabId)
+  );
 
   handleTrusted("prism:export-cookies", (profileId) => workspaceManager.exportCookies(profileId));
   handleTrusted("prism:import-cookies", (profileId, cookies, mode) =>
@@ -193,7 +198,25 @@ function buildAppMenu() {
     {
       label: "视图",
       submenu: [
-        ...(!app.isPackaged ? [{ role: "toggleDevTools", label: "开发者工具" }] : []),
+        {
+          label: "网页开发者工具",
+          sublabel: isMac ? "F12 / ⌥⌘I" : "F12 / Ctrl+Shift+I",
+          click: () => {
+            if (workspaceManager) {
+              workspaceManager.toggleActiveTabDevTools();
+            }
+          },
+        },
+        ...(!app.isPackaged
+          ? [
+              {
+                role: "toggleDevTools",
+                label: "管理界面开发者工具",
+                accelerator: isMac ? "Shift+Alt+Command+I" : "Ctrl+Shift+Alt+I",
+              },
+            ]
+          : []),
+        { type: "separator" },
         { role: "resetZoom", label: "实际大小" },
         { role: "zoomIn", label: "放大" },
         { role: "zoomOut", label: "缩小" },
@@ -247,6 +270,20 @@ function createMainWindow() {
       spellcheck: false,
       ...(isCustomerPackaged ? { devTools: false } : {}),
     },
+  });
+
+  // Allow Chrome-like DevTools shortcuts (F12 / Cmd+Opt+I / Ctrl+Shift+I) to toggle
+  // the active web tab's detached DevTools even when focus is on the address bar or
+  // tab strip, across all editions.
+  win.webContents.on("before-input-event", (event, input) => {
+    if (
+      isTabDevToolsShortcut(input) &&
+      workspaceManager &&
+      workspaceManager.hasActiveVisibleTab()
+    ) {
+      event.preventDefault();
+      workspaceManager.toggleActiveTabDevTools();
+    }
   });
 
   if (isCustomerPackaged) {
@@ -364,6 +401,8 @@ if (!singleLock) {
       userDataDir,
       sessionModule: session,
       WebContentsViewClass: WebContentsView,
+      menuModule: Menu,
+      clipboardModule: clipboard,
       chromiumVersion: process.versions.chrome,
     });
 
@@ -376,7 +415,13 @@ if (!singleLock) {
       userDataDir,
       brandName,
       feedUrl: process.env.PRISM_UPDATE_URL || undefined,
+      repoRoot: path.resolve(__dirname, ".."),
       enabled: !isCustomerEdition && !process.env.PRISM_DISABLE_AUTO_UPDATE,
+      netFetch: net && typeof net.fetch === "function" ? net.fetch.bind(net) : null,
+      resolveProxy:
+        session && session.defaultSession && typeof session.defaultSession.resolveProxy === "function"
+          ? (url) => session.defaultSession.resolveProxy(url)
+          : null,
       log: (msg) => process.stderr.write(`[updater] ${msg}\n`),
     });
     updater.onRestartRequested = () => {

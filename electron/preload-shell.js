@@ -65,6 +65,10 @@ const prismDesktop = Object.freeze({
     return ipcRenderer.invoke("prism:stop", profileId, tabId);
   },
 
+  toggleDevTools(profileId, tabId) {
+    return ipcRenderer.invoke("prism:toggle-devtools", profileId, tabId);
+  },
+
   exportCookies(profileId) {
     return ipcRenderer.invoke("prism:export-cookies", profileId);
   },

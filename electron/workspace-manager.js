@@ -69,6 +69,31 @@ function navigateForward(wc) {
   }
 }
 
+function isTabDevToolsShortcut(input) {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+  if (input.type && input.type !== "keyDown") {
+    return false;
+  }
+  if (input.isAutoRepeat) {
+    return false;
+  }
+  const key = String(input.key || "").toLowerCase();
+  const code = String(input.code || "").toLowerCase();
+  if ((key === "f12" || code === "f12") && !input.control && !input.alt && !input.meta) {
+    return true;
+  }
+  const isIOrJ = key === "i" || key === "j" || code === "keyi" || code === "keyj";
+  if (input.meta && input.alt && !input.control && isIOrJ) {
+    return true;
+  }
+  if (input.control && input.shift && !input.meta && !input.alt && isIOrJ) {
+    return true;
+  }
+  return false;
+}
+
 class WorkspaceManager {
   constructor({
     mainWindow,
@@ -76,6 +101,8 @@ class WorkspaceManager {
     userDataDir,
     sessionModule,
     WebContentsViewClass,
+    menuModule = null,
+    clipboardModule = null,
     chromiumVersion = process.versions.chrome,
     onWorkspacesChanged = null,
   }) {
@@ -84,11 +111,14 @@ class WorkspaceManager {
     this.userDataDir = userDataDir;
     this.sessionModule = sessionModule;
     this.WebContentsViewClass = WebContentsViewClass;
+    this.menuModule = menuModule;
+    this.clipboardModule = clipboardModule;
     this.chromiumVersion = chromiumVersion;
     this.onWorkspacesChangedCallback = onWorkspacesChanged;
 
     this.workspaces = new Map(); // profileId -> workspace
     this.openingLocks = new Map(); // profileId -> Promise
+    this._devToolsBoundContents = new WeakSet();
     this.activeProfileId = null;
     this.viewportBounds = { x: 0, y: 0, width: 0, height: 0 };
     this.viewportVisible = true;
@@ -104,6 +134,7 @@ class WorkspaceManager {
       loading: tab.loading,
       canGoBack: tab.canGoBack,
       canGoForward: tab.canGoForward,
+      devToolsOpened: Boolean(tab.devToolsOpened),
     };
   }
 
@@ -307,10 +338,32 @@ class WorkspaceManager {
       loading: false,
       canGoBack: false,
       canGoForward: false,
+      devToolsOpened: false,
       isNewTab: true,
       isErrorPage: false,
       failedUrl: "",
     };
+
+    // Enable Chrome-like detached DevTools (F12 / Cmd+Opt+I / Ctrl+Shift+I) and
+    // right-click context menu ("检查") on every tab across all editions.
+    this._bindDevToolsShortcut(wc, wc);
+
+    wc.on("devtools-opened", () => {
+      tab.devToolsOpened = true;
+      if (wc.devToolsWebContents && !wc.devToolsWebContents.isDestroyed()) {
+        this._bindDevToolsShortcut(wc.devToolsWebContents, wc);
+      }
+      this.emitWorkspacesChanged();
+    });
+
+    wc.on("devtools-closed", () => {
+      tab.devToolsOpened = false;
+      this.emitWorkspacesChanged();
+    });
+
+    wc.on("context-menu", (_event, params) => {
+      this._showTabContextMenu(ws, tab, wc, params || {});
+    });
 
     // Strict per-profile localhost proxy credential binding ONLY
     wc.on("login", (event, _details, authInfo, callback) => {
@@ -454,6 +507,17 @@ class WorkspaceManager {
     }
     const wc = tab.view.webContents;
     if (wc && !wc.isDestroyed()) {
+      try {
+        if (
+          typeof wc.isDevToolsOpened === "function" &&
+          wc.isDevToolsOpened() &&
+          typeof wc.closeDevTools === "function"
+        ) {
+          wc.closeDevTools();
+        }
+      } catch {
+        // ignore
+      }
       try {
         if (wc.debugger && wc.debugger.isAttached()) {
           wc.debugger.detach();
@@ -653,6 +717,190 @@ class WorkspaceManager {
     }
   }
 
+  _bindDevToolsShortcut(sourceWc, targetWc) {
+    if (
+      !sourceWc ||
+      typeof sourceWc.on !== "function" ||
+      this._devToolsBoundContents.has(sourceWc)
+    ) {
+      return;
+    }
+    this._devToolsBoundContents.add(sourceWc);
+    sourceWc.on("before-input-event", (event, input) => {
+      if (isTabDevToolsShortcut(input)) {
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        this._toggleWebContentsDevTools(targetWc);
+      }
+    });
+  }
+
+  _openWebContentsDevTools(wc, { inspectPoint } = {}) {
+    if (!wc || wc.isDestroyed()) {
+      return false;
+    }
+    const hasInspectPoint =
+      inspectPoint &&
+      Number.isFinite(inspectPoint.x) &&
+      Number.isFinite(inspectPoint.y) &&
+      typeof wc.inspectElement === "function";
+    const alreadyOpen = typeof wc.isDevToolsOpened === "function" && wc.isDevToolsOpened();
+
+    if (alreadyOpen) {
+      if (hasInspectPoint) {
+        wc.inspectElement(Math.round(inspectPoint.x), Math.round(inspectPoint.y));
+      }
+      if (
+        wc.devToolsWebContents &&
+        !wc.devToolsWebContents.isDestroyed() &&
+        typeof wc.devToolsWebContents.focus === "function"
+      ) {
+        wc.devToolsWebContents.focus();
+      }
+      return true;
+    }
+
+    if (hasInspectPoint && typeof wc.once === "function") {
+      wc.once("devtools-opened", () => {
+        if (!wc.isDestroyed()) {
+          wc.inspectElement(Math.round(inspectPoint.x), Math.round(inspectPoint.y));
+        }
+      });
+    }
+
+    if (typeof wc.openDevTools === "function") {
+      wc.openDevTools({ mode: "detach", activate: true });
+      return true;
+    }
+    return false;
+  }
+
+  _toggleWebContentsDevTools(wc) {
+    if (!wc || wc.isDestroyed()) {
+      return false;
+    }
+    const opened = typeof wc.isDevToolsOpened === "function" && wc.isDevToolsOpened();
+    if (opened) {
+      if (typeof wc.closeDevTools === "function") {
+        wc.closeDevTools();
+      }
+      return false;
+    }
+    return this._openWebContentsDevTools(wc);
+  }
+
+  _showTabContextMenu(ws, tab, wc, params) {
+    if (
+      !this.menuModule ||
+      typeof this.menuModule.buildFromTemplate !== "function" ||
+      !this.mainWindow ||
+      this.mainWindow.isDestroyed()
+    ) {
+      return;
+    }
+
+    const template = [];
+    const linkUrl = typeof params.linkURL === "string" ? params.linkURL.trim() : "";
+    if (/^https?:\/\//i.test(linkUrl)) {
+      template.push({
+        label: "在新标签页中打开链接",
+        click: () => {
+          this.createTab(ws.profileId, linkUrl).catch(() => {});
+        },
+      });
+      if (this.clipboardModule && typeof this.clipboardModule.writeText === "function") {
+        template.push({
+          label: "复制链接地址",
+          click: () => {
+            this.clipboardModule.writeText(linkUrl);
+          },
+        });
+      }
+      template.push({ type: "separator" });
+    }
+
+    if (params.isEditable) {
+      template.push(
+        { role: "undo", label: "撤销" },
+        { role: "redo", label: "重做" },
+        { type: "separator" },
+        { role: "cut", label: "剪切" },
+        { role: "copy", label: "复制" },
+        { role: "paste", label: "粘贴" },
+        { role: "selectAll", label: "全选" },
+        { type: "separator" }
+      );
+    } else {
+      if (typeof params.selectionText === "string" && params.selectionText.trim()) {
+        template.push({ role: "copy", label: "复制" }, { type: "separator" });
+      }
+      template.push(
+        {
+          label: "返回",
+          enabled: canGoBack(wc),
+          click: () => navigateBack(wc),
+        },
+        {
+          label: "前进",
+          enabled: canGoForward(wc),
+          click: () => navigateForward(wc),
+        },
+        {
+          label: "重新加载",
+          click: () => this.reload(ws.profileId, tab.id),
+        },
+        { type: "separator" }
+      );
+    }
+
+    template.push({
+      label: "检查",
+      click: () => {
+        this._openWebContentsDevTools(wc, {
+          inspectPoint:
+            Number.isFinite(params.x) && Number.isFinite(params.y)
+              ? { x: params.x, y: params.y }
+              : null,
+        });
+      },
+    });
+
+    const menu = this.menuModule.buildFromTemplate(template);
+    if (menu && typeof menu.popup === "function") {
+      menu.popup({ window: this.mainWindow });
+    }
+  }
+
+  hasActiveVisibleTab() {
+    return Boolean(
+      this.viewportVisible &&
+        this.activeProfileId &&
+        this._resolveTab(this.activeProfileId, null)
+    );
+  }
+
+  toggleDevTools(profileId, tabId) {
+    const resolved = this._resolveTab(profileId, tabId);
+    if (!resolved) {
+      return { open: false };
+    }
+    const open = this._toggleWebContentsDevTools(resolved.wc);
+    return { open: Boolean(open) };
+  }
+
+  toggleActiveTabDevTools() {
+    if (!this.hasActiveVisibleTab()) {
+      return { open: false, handled: false };
+    }
+    const resolved = this._resolveTab(this.activeProfileId, null);
+    if (!resolved) {
+      return { open: false, handled: false };
+    }
+    const open = this._toggleWebContentsDevTools(resolved.wc);
+    return { open: Boolean(open), handled: true };
+  }
+
   async exportCookies(profileId) {
     const ses = this.sessionModule.fromPartition(partitionNameForProfile(profileId));
     const raw = await ses.cookies.get({});
@@ -725,6 +973,7 @@ class WorkspaceManager {
 
 module.exports = {
   WorkspaceManager,
+  isTabDevToolsShortcut,
   partitionNameForProfile,
   partitionDirNameForProfile,
 };

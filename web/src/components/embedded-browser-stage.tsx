@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Code2,
   Cookie,
   Copy,
   Globe,
@@ -239,6 +240,12 @@ export function EmbeddedBrowserStage({ workspace }: { workspace: ProfileWorkspac
     } else {
       await bridge.reload(workspace.profileId, activeTab.id).catch(() => {})
     }
+  }
+
+  async function handleToggleDevTools() {
+    const bridge = getDesktopBridge()
+    if (!bridge || !activeTab || typeof bridge.toggleDevTools !== 'function') return
+    await bridge.toggleDevTools(workspace.profileId, activeTab.id).catch(() => {})
   }
 
   return (
@@ -517,6 +524,20 @@ export function EmbeddedBrowserStage({ workspace }: { workspace: ProfileWorkspac
             aria-label={t('Cookies')}
           >
             <Cookie size={13} className="text-ink-dim" aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            disabled={!activeTab}
+            onClick={() => { void handleToggleDevTools() }}
+            className={`btn btn-ghost h-[28px] w-[28px] p-0 ${
+              activeTab?.devToolsOpened ? 'bg-signal/12 text-signal' : ''
+            }`}
+            title={t('Developer tools (F12)')}
+            aria-label={t('Developer tools')}
+            aria-pressed={Boolean(activeTab?.devToolsOpened)}
+          >
+            <Code2 size={13} className={activeTab?.devToolsOpened ? 'text-signal' : 'text-ink-dim'} aria-hidden="true" />
           </button>
         </div>
       </div>

@@ -16,6 +16,7 @@ export interface TabState {
   loading: boolean
   canGoBack: boolean
   canGoForward: boolean
+  devToolsOpened?: boolean
 }
 
 export interface ProfileWorkspaceState {
@@ -65,6 +66,7 @@ export interface PrismDesktopBridge {
   goForward(profileId: string, tabId: string): Promise<void>
   reload(profileId: string, tabId: string): Promise<void>
   stop(profileId: string, tabId: string): Promise<void>
+  toggleDevTools(profileId: string, tabId: string): Promise<{ open: boolean }>
   exportCookies(profileId: string): Promise<DesktopCookieItem[]>
   importCookies(
     profileId: string,

@@ -279,6 +279,67 @@ app.whenReady().then(async () => {
       assert.equal(req.acceptLanguage, "en-US,en;q=0.9");
     }
 
+    // 4. Verify detached DevTools coexists with CDP fingerprint attachment on guest WebContentsView
+    const dtSes = session.fromPartition("persist:prism_smoke_devtools");
+    await dtSes.setProxy({
+      proxyRules: `http://127.0.0.1:${proxyInfo.port}`,
+      proxyBypassRules: "<-loopback>",
+    });
+    const dtIdentity = buildChromeIdentity(
+      {
+        os: "macos",
+        timezone: "America/New_York",
+        languages: ["en-US", "en"],
+        webrtc_policy: "block",
+        canvas_policy: "stable_hardware",
+        fingerprint_hash: "fp-smoke-devtools",
+        pinned_fingerprint: { platform: "MacIntel", hardware_concurrency: 12 },
+      },
+      process.versions.chrome
+    );
+    configureSessionIdentity(dtSes, dtIdentity);
+    const dtView = new WebContentsView({
+      webPreferences: {
+        session: dtSes,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: false,
+      },
+    });
+    win.contentView.addChildView(dtView);
+    dtView.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+    const dtWc = dtView.webContents;
+    dtWc.on("login", (event, _details, authInfo, callback) => {
+      if (authInfo.isProxy && authInfo.host === "127.0.0.1" && authInfo.port === proxyInfo.port) {
+        event.preventDefault();
+        callback("prism-u", "prism-p");
+      }
+    });
+    await attachFingerprintToWebContents(dtWc, dtIdentity);
+    const dtOpened = new Promise((resolve) => dtWc.once("devtools-opened", resolve));
+    dtWc.openDevTools({ mode: "detach", activate: false });
+    await dtOpened;
+    assert.equal(dtWc.isDevToolsOpened(), true, "Guest tab must open detached DevTools");
+    assert.equal(dtWc.debugger.isAttached(), true, "CDP debugger must remain attached with DevTools open");
+    await dtWc.loadURL("http://remote-via-proxy.prism.test/devtools-probe");
+    const dtFp = await dtWc.executeJavaScript(`({
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      webrtcType: typeof window.RTCPeerConnection,
+    })`);
+    assert.equal(dtFp.timezone, "America/New_York");
+    assert.equal(dtFp.hardwareConcurrency, 12);
+    assert.equal(dtFp.webrtcType, "undefined");
+    const dtClosed = new Promise((resolve) => dtWc.once("devtools-closed", resolve));
+    dtWc.closeDevTools();
+    await dtClosed;
+    assert.equal(dtWc.isDevToolsOpened(), false);
+    assert.equal(dtWc.debugger.isAttached(), true);
+    win.contentView.removeChildView(dtView);
+    dtWc.debugger.detach();
+    dtWc.close();
+
     // Verify preload exposes window.prismDesktop on main window ONLY
     await win.loadURL("data:text/html,<html><body>Shell</body></html>");
     const shellBridge = await win.webContents.executeJavaScript(

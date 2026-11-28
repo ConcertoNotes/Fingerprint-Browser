@@ -13,7 +13,17 @@ const {
   backupOnVersionChange,
   legacyDataDirCandidates,
 } = require("../data-dir");
-const { UpdateManager, compareVersions, validateManifest, manifestName } = require("../updater");
+const {
+  UpdateManager,
+  compareVersions,
+  compareCandidates,
+  pickLatestCandidate,
+  validateManifest,
+  manifestName,
+  isProxyConfigured,
+  LOCAL_SOURCE_FILE,
+  INSTALL_ERROR_FILE,
+} = require("../updater");
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -135,7 +145,13 @@ test("updater downloads and verifies a newer build, ignores older ones", async (
     return new Response(payload);
   };
   const fakeApp = { isPackaged: true, getVersion: () => "0.6.0" };
-  const mgr = new UpdateManager({ app: fakeApp, userDataDir: userData, feedUrl: "https://example.test/feed", fetchImpl });
+  const mgr = new UpdateManager({
+    app: fakeApp,
+    userDataDir: userData,
+    feedUrl: "https://example.test/feed",
+    localDistDir: null,
+    fetchImpl,
+  });
   if (!mgr.enabled) {
     return; // platform without an update channel (Linux CI)
   }
@@ -144,10 +160,17 @@ test("updater downloads and verifies a newer build, ignores older ones", async (
 
   const ready = await mgr.checkNow();
   assert.equal(ready.version, "9.9.9");
+  assert.equal(ready.source, "remote");
   assert.equal(fs.readFileSync(ready.installerPath).toString(), "installer-bytes");
   assert.ok(mgr.hasPendingUpdate());
 
-  const older = new UpdateManager({ app: fakeApp, userDataDir: userData, feedUrl: "https://example.test/feed", fetchImpl });
+  const older = new UpdateManager({
+    app: fakeApp,
+    userDataDir: userData,
+    feedUrl: "https://example.test/feed",
+    localDistDir: null,
+    fetchImpl,
+  });
   older._canSelfUpdate = () => true;
   manifestVersion = "0.5.9";
   assert.equal(await older.checkNow(), null);
@@ -166,6 +189,7 @@ test("updater rejects a download whose hash does not match", async () => {
     app: { isPackaged: true, getVersion: () => "0.6.0" },
     userDataDir: userData,
     feedUrl: "https://example.test/feed",
+    localDistDir: null,
     fetchImpl,
   });
   if (!mgr.enabled) {
@@ -175,4 +199,171 @@ test("updater rejects a download whose hash does not match", async () => {
   assert.equal(await mgr.checkNow(), null);
   assert.equal(mgr.state, "error");
   assert.equal(mgr.hasPendingUpdate(), false);
+});
+
+function writeLocalDistArtifact(distDir, { version, payload, releasedAt = "2026-11-28T02:00:00Z" }) {
+  const isMac = process.platform === "darwin";
+  const file = isMac ? "prism-browser-macos-arm64.dmg" : "prism-browser-windows-x64-setup.exe";
+  const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+  const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.writeFileSync(path.join(distDir, file), buf);
+  fs.writeFileSync(
+    path.join(distDir, manifestName()),
+    JSON.stringify({ version, file, sha256, size: buf.length, released_at: releasedAt }, null, 2)
+  );
+  return { file, sha256, size: buf.length };
+}
+
+test("updater compares local dist and remote feed and always picks the newest version", async () => {
+  const isMac = process.platform === "darwin";
+  const file = isMac ? "prism-browser-macos-arm64.dmg" : "prism-browser-windows-x64-setup.exe";
+  const remoteBuf = Buffer.from("remote-0.6.5-bytes");
+  const remoteSha = crypto.createHash("sha256").update(remoteBuf).digest("hex");
+  const localBuf = Buffer.from("local-0.6.6-bytes");
+
+  // 1) Local dist (0.6.6) beats remote (0.6.5) via local-update-source.json
+  const userData = tmp("prism-userdata-");
+  const distDir = tmp("prism-local-dist-");
+  writeLocalDistArtifact(distDir, { version: "0.6.6", payload: localBuf });
+  fs.writeFileSync(path.join(userData, LOCAL_SOURCE_FILE), JSON.stringify({ dist_dir: distDir }));
+
+  let remoteVersion = "0.6.5";
+  const fetchImpl = async (url) => {
+    if (url.endsWith(manifestName())) {
+      return new Response(
+        JSON.stringify({
+          version: remoteVersion,
+          file,
+          sha256: remoteSha,
+          size: remoteBuf.length,
+          released_at: "2026-11-28T01:00:00Z",
+        })
+      );
+    }
+    return new Response(remoteBuf);
+  };
+
+  const mgr = new UpdateManager({
+    app: { isPackaged: true, getVersion: () => "0.6.3" },
+    userDataDir: userData,
+    feedUrl: "https://example.test/feed",
+    fetchImpl,
+  });
+  if (!mgr.enabled) {
+    return;
+  }
+  mgr._canSelfUpdate = () => true;
+  mgr._stageMacApp = (_dmg, _dir, ver) => `/tmp/staged-${ver}.app`;
+
+  const first = await mgr.checkNow();
+  assert.equal(first.version, "0.6.6");
+  assert.equal(first.source, "local");
+  assert.equal(fs.readFileSync(first.installerPath).toString(), "local-0.6.6-bytes");
+
+  // 2) Even after 0.6.6 is ready, a newer remote 0.6.7 supersedes it
+  remoteVersion = "0.6.7";
+  const second = await mgr.checkNow();
+  assert.equal(second.version, "0.6.7");
+  assert.equal(second.source, "remote");
+  assert.equal(fs.readFileSync(second.installerPath).toString(), "remote-0.6.5-bytes");
+
+  // 3) If remote fails completely, a newer local dist (0.6.8) still succeeds
+  writeLocalDistArtifact(distDir, { version: "0.6.8", payload: Buffer.from("local-0.6.8") });
+  mgr.fetch = async () => {
+    throw new Error("network down");
+  };
+  const third = await mgr.checkNow();
+  assert.equal(third.version, "0.6.8");
+  assert.equal(third.source, "local");
+});
+
+test("pickLatestCandidate breaks same-version ties by timestamp then local preference", () => {
+  const mk = (source, version, releasedAt) => ({
+    source,
+    manifest: { version, file: "a.dmg", sha256: "a".repeat(64), size: 10, releasedAt },
+  });
+  assert.equal(
+    pickLatestCandidate(
+      [mk("local", "0.6.4", "2026-11-28T01:00:00Z"), mk("remote", "0.6.4", "2026-11-28T03:00:00Z")],
+      "0.6.3"
+    ).source,
+    "remote"
+  );
+  assert.equal(
+    pickLatestCandidate(
+      [mk("remote", "0.6.4", "2026-11-28T02:00:00Z"), mk("local", "0.6.4", "2026-11-28T02:00:00Z")],
+      "0.6.3"
+    ).source,
+    "local"
+  );
+  assert.ok(compareCandidates(mk("local", "0.6.5", ""), mk("remote", "0.6.4", "2026-12-01T00:00:00Z")) > 0);
+});
+
+test("updater prefers proxy-aware netFetch when system proxy is active and falls back cleanly", async () => {
+  assert.equal(isProxyConfigured("DIRECT"), false);
+  assert.equal(isProxyConfigured("PROXY 127.0.0.1:7890; DIRECT"), true);
+
+  const userData = tmp("prism-userdata-");
+  const payload = Buffer.from("via-proxy-bytes");
+  const sha256 = crypto.createHash("sha256").update(payload).digest("hex");
+  const isMac = process.platform === "darwin";
+  const file = isMac ? "prism-browser-macos-arm64.dmg" : "prism-browser-windows-x64-setup.exe";
+  const calls = [];
+
+  const mgr = new UpdateManager({
+    app: { isPackaged: true, getVersion: () => "0.6.0" },
+    userDataDir: userData,
+    feedUrl: "https://example.test/feed",
+    localDistDir: null,
+    resolveProxy: async () => "PROXY 127.0.0.1:7890",
+    netFetch: async (url) => {
+      calls.push(["netFetch", url]);
+      if (url.endsWith(manifestName())) {
+        return new Response(JSON.stringify({ version: "0.6.4", file, sha256, size: payload.length }));
+      }
+      // Simulate mid-flight proxy failure on binary download to verify fallback to node fetch
+      throw new Error("ERR_TUNNEL_CONNECTION_FAILED");
+    },
+    fetchImpl: async (url) => {
+      calls.push(["nodeFetch", url]);
+      return new Response(payload);
+    },
+  });
+  if (!mgr.enabled) {
+    return;
+  }
+  mgr._canSelfUpdate = () => true;
+  mgr._stageMacApp = () => "/tmp/staged.app";
+
+  const ready = await mgr.checkNow();
+  assert.equal(ready.version, "0.6.4");
+  assert.equal(calls[0][0], "netFetch");
+  assert.ok(calls.some(([who]) => who === "nodeFetch"), "Should fall back to nodeFetch when netFetch fails");
+});
+
+test("updater surfaces and clears previous swap error on next startup", () => {
+  const userData = tmp("prism-userdata-");
+  const updatesDir = path.join(userData, "updates");
+  fs.mkdirSync(updatesDir, { recursive: true });
+  fs.writeFileSync(path.join(updatesDir, INSTALL_ERROR_FILE), "权限不足无法替换应用\n");
+
+  const shown = [];
+  const mgr = new UpdateManager({
+    app: { isPackaged: true, getVersion: () => "0.6.3" },
+    dialog: {
+      showMessageBox: async (opts) => {
+        shown.push(opts);
+        return { response: 0 };
+      },
+    },
+    userDataDir: userData,
+    localDistDir: null,
+  });
+
+  const surfaced = mgr._surfacePreviousInstallError();
+  assert.equal(surfaced, "权限不足无法替换应用");
+  assert.equal(fs.existsSync(path.join(updatesDir, INSTALL_ERROR_FILE)), false);
+  assert.equal(shown.length, 1);
+  assert.ok(shown[0].message.includes("未能完成"));
 });

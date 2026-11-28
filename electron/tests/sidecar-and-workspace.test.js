@@ -16,7 +16,11 @@ const {
   cookieToPortableItem,
   portableItemToElectronSetDetails,
 } = require("../cookies");
-const { WorkspaceManager, partitionNameForProfile } = require("../workspace-manager");
+const {
+  WorkspaceManager,
+  isTabDevToolsShortcut,
+  partitionNameForProfile,
+} = require("../workspace-manager");
 
 test("Fernet secret key generator creates 44-char Python-compatible keys and persists with 0600", () => {
   const key = generateFernetKey();
@@ -255,6 +259,37 @@ function createMockElectronHarness() {
         wc.reloaded = (wc.reloaded || 0) + 1;
       };
       wc.stop = () => {};
+      wc._devToolsOpened = false;
+      wc.openDevToolsCalls = [];
+      wc.closeDevToolsCalls = 0;
+      wc.inspectElementCalls = [];
+      wc.devToolsWebContents = null;
+      wc.isDevToolsOpened = () => wc._devToolsOpened;
+      wc.openDevTools = (opts) => {
+        wc.openDevToolsCalls.push(opts);
+        wc._devToolsOpened = true;
+        const dtWc = new EventEmitter();
+        dtWc._destroyed = false;
+        dtWc.focused = 0;
+        dtWc.isDestroyed = () => dtWc._destroyed;
+        dtWc.focus = () => {
+          dtWc.focused += 1;
+        };
+        wc.devToolsWebContents = dtWc;
+        wc.emit("devtools-opened");
+      };
+      wc.closeDevTools = () => {
+        wc.closeDevToolsCalls += 1;
+        wc._devToolsOpened = false;
+        if (wc.devToolsWebContents) {
+          wc.devToolsWebContents._destroyed = true;
+        }
+        wc.devToolsWebContents = null;
+        wc.emit("devtools-closed");
+      };
+      wc.inspectElement = (x, y) => {
+        wc.inspectElementCalls.push({ x, y });
+      };
       wc.close = () => {
         wc._destroyed = true;
       };
@@ -461,12 +496,155 @@ test("WorkspaceManager enforces per-profile proxy, scoped login auth, CDP order,
   assert.deepEqual(released, ["prof-1"]);
 });
 
+test("WorkspaceManager supports detached DevTools via F12 / Cmd+Opt+I / Ctrl+Shift+I, context menu inspect, and IPC toggle", async () => {
+  assert.equal(isTabDevToolsShortcut({ type: "keyDown", key: "F12" }), true);
+  assert.equal(isTabDevToolsShortcut({ type: "keyUp", key: "F12" }), false);
+  assert.equal(isTabDevToolsShortcut({ type: "keyDown", key: "F12", isAutoRepeat: true }), false);
+  assert.equal(isTabDevToolsShortcut({ type: "keyDown", key: "F12", control: true }), false);
+  assert.equal(
+    isTabDevToolsShortcut({ type: "keyDown", key: "Dead", code: "KeyI", meta: true, alt: true }),
+    true
+  );
+  assert.equal(
+    isTabDevToolsShortcut({ type: "keyDown", key: "∆", code: "KeyJ", meta: true, alt: true }),
+    true
+  );
+  assert.equal(
+    isTabDevToolsShortcut({ type: "keyDown", key: "I", control: true, shift: true }),
+    true
+  );
+  assert.equal(
+    isTabDevToolsShortcut({ type: "keyDown", key: "j", control: true, shift: true }),
+    true
+  );
+  assert.equal(isTabDevToolsShortcut({ type: "keyDown", key: "i" }), false);
+  assert.equal(isTabDevToolsShortcut({ type: "keyDown", key: "c", meta: true }), false);
+
+  const harness = createMockElectronHarness();
+  const builtMenus = [];
+  const clipboardWrites = [];
+  const mockMenu = {
+    buildFromTemplate(template) {
+      const entry = { template, popped: 0 };
+      builtMenus.push(entry);
+      return {
+        popup() {
+          entry.popped += 1;
+        },
+      };
+    },
+  };
+  const mockClipboard = {
+    writeText(text) {
+      clipboardWrites.push(text);
+    },
+  };
+  const mockSidecar = {
+    async prepareProfileSession(profileId) {
+      return {
+        ok: true,
+        data: {
+          profile_id: profileId,
+          status: "ready",
+          proxy: null,
+          exit_ip: null,
+          exit_country: null,
+          exit_city: null,
+          isolation: { os: "macos", timezone: "America/Los_Angeles", languages: ["en-US"] },
+        },
+      };
+    },
+    async releaseProfileSession() {
+      return { ok: true };
+    },
+  };
+
+  const mgr = new WorkspaceManager({
+    mainWindow: harness.mainWindow,
+    sidecar: mockSidecar,
+    userDataDir: "",
+    sessionModule: harness.sessionModule,
+    WebContentsViewClass: harness.MockWebContentsView,
+    menuModule: mockMenu,
+    clipboardModule: mockClipboard,
+    chromiumVersion: "135.0.7049.115",
+  });
+
+  mgr.setViewportBounds({ x: 0, y: 80, width: 1000, height: 700 });
+  const openRes = await mgr.openProfile("prof-dt");
+  assert.equal(openRes.ok, true);
+  const tabId = openRes.workspace.activeTabId;
+  const view = harness.attachedViews[0];
+  const wc = view.webContents;
+
+  // 1. Pressing F12 inside tab opens detached DevTools and updates serialized state
+  let prevented = false;
+  wc.emit(
+    "before-input-event",
+    {
+      preventDefault() {
+        prevented = true;
+      },
+    },
+    { type: "keyDown", key: "F12", code: "F12" }
+  );
+  assert.equal(prevented, true);
+  assert.deepEqual(wc.openDevToolsCalls, [{ mode: "detach", activate: true }]);
+  assert.equal(mgr.listWorkspaces()[0].tabs[0].devToolsOpened, true);
+
+  // 2. Pressing F12 inside the detached DevTools window closes it cleanly
+  let dtPrevented = false;
+  wc.devToolsWebContents.emit(
+    "before-input-event",
+    {
+      preventDefault() {
+        dtPrevented = true;
+      },
+    },
+    { type: "keyDown", key: "F12", code: "F12" }
+  );
+  assert.equal(dtPrevented, true);
+  assert.equal(wc.closeDevToolsCalls, 1);
+  assert.equal(mgr.listWorkspaces()[0].tabs[0].devToolsOpened, false);
+
+  // 3. toggleActiveTabDevTools respects viewport visibility
+  mgr.setViewportVisible(false);
+  assert.deepEqual(mgr.toggleActiveTabDevTools(), { open: false, handled: false });
+  mgr.setViewportVisible(true);
+  assert.deepEqual(mgr.toggleActiveTabDevTools(), { open: true, handled: true });
+  assert.equal(wc.openDevToolsCalls.length, 2);
+  assert.deepEqual(mgr.toggleDevTools("prof-dt", tabId), { open: false });
+  assert.equal(wc.closeDevToolsCalls, 2);
+
+  // 4. Right-click context menu provides link actions + "检查" inspect element in detached DevTools
+  wc.emit("context-menu", {}, { x: 120, y: 240, linkURL: "https://example.com/docs" });
+  assert.equal(builtMenus.length, 1);
+  assert.equal(builtMenus[0].popped, 1);
+  const copyLinkItem = builtMenus[0].template.find((item) => item.label === "复制链接地址");
+  assert.ok(copyLinkItem);
+  copyLinkItem.click();
+  assert.deepEqual(clipboardWrites, ["https://example.com/docs"]);
+
+  const inspectItem = builtMenus[0].template.find((item) => item.label === "检查");
+  assert.ok(inspectItem);
+  inspectItem.click();
+  assert.equal(wc.openDevToolsCalls.length, 3);
+  assert.deepEqual(wc.inspectElementCalls, [{ x: 120, y: 240 }]);
+
+  // 5. Closing profile closes detached DevTools before destroying tab webContents
+  await mgr.closeProfile("prof-dt");
+  assert.equal(wc.closeDevToolsCalls, 3);
+});
+
 test("main.js declares all 4 anti-leak Chromium switches and electron-builder.yml matches packaging spec", () => {
   const mainSrc = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
   assert.ok(mainSrc.includes('appendSwitch("disable-quic")'));
   assert.ok(mainSrc.includes('"force-webrtc-ip-handling-policy", "disable_non_proxied_udp"'));
   assert.ok(mainSrc.includes("AsyncDns,DnsOverHttps,WebRtcHideLocalIpsWithMdns"));
   assert.ok(mainSrc.includes("MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"));
+  assert.ok(mainSrc.includes('handleTrusted("prism:toggle-devtools"'));
+  assert.ok(mainSrc.includes("isTabDevToolsShortcut"));
+  assert.ok(mainSrc.includes("网页开发者工具"));
 
   const builderYml = fs.readFileSync(path.join(__dirname, "..", "electron-builder.yml"), "utf8");
   assert.ok(builderYml.includes("appId: com.prismbrowser.desktop"));
