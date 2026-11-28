@@ -427,12 +427,14 @@ class SidecarManager {
     repoRoot,
     safeStorage = null,
     distribution = null,
+    appVersion = null,
   }) {
     this.isPackaged = Boolean(isPackaged);
     this.resourcesPath = resourcesPath || "";
     this.userDataDir = userDataDir;
     this.repoRoot = repoRoot || path.resolve(__dirname, "..");
     this.safeStorage = safeStorage || null;
+    this.appVersion = typeof appVersion === "string" && appVersion.trim() ? appVersion.trim() : null;
 
     if (distribution && typeof distribution === "object") {
       this.distribution = normalizeDistributionConfig(distribution);
@@ -487,6 +489,10 @@ class SidecarManager {
 
     if (this.isPackaged) {
       env.CPM_BUNDLED_RUNTIME_DIR = path.join(this.resourcesPath, "runtime");
+    }
+
+    if (this.appVersion) {
+      env.CPM_APP_VERSION = this.appVersion;
     }
 
     return env;

@@ -16,6 +16,7 @@ import {
   type SystemConfig,
   type SystemStatus,
 } from '@/lib/api'
+import { getDesktopBridge } from '@/lib/desktop-bridge'
 import type { Translator } from '@/lib/i18n'
 
 function formatUptime(seconds: number, t: Translator): string {
@@ -29,6 +30,7 @@ export default function SettingsPage() {
   const { t } = useI18n()
   const [config, setConfig] = useState<SystemConfig | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
+  const [desktopVersion, setDesktopVersion] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [key, setKey] = useState('')
   const toast = useToast()
@@ -40,6 +42,10 @@ export default function SettingsPage() {
       try {
         setConfig(await systemAPI.config())
         setStatus(await systemAPI.status().catch(() => null))
+        const info = await getDesktopBridge()?.getEngineInfo().catch(() => null)
+        if (info?.appVersion) {
+          setDesktopVersion(info.appVersion)
+        }
       } catch (err) {
         setError(String(err instanceof Error ? err.message : err))
       }
@@ -131,7 +137,7 @@ export default function SettingsPage() {
 
           <Group title={t('Runtime info')}>
             <Row label={t('Version')}>
-              <span className="font-mono">{config.version}</span>
+              <span className="font-mono">{desktopVersion || config.version}</span>
             </Row>
             <Row label={t('Uptime')}>
               <span className="font-mono">{formatUptime(config.uptime_seconds, t)}</span>

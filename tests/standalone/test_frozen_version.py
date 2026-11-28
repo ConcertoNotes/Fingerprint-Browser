@@ -51,6 +51,20 @@ class FrozenVersionTests(unittest.TestCase):
     def test_other_frozen_entrypoints_retain_metadata_fallback(self):
         self.assertEqual(self.resolve_version(True, None), "0.6.0rc7")
 
+    def test_cpm_app_version_env_overrides_frozen_hook_and_metadata(self):
+        code = (
+            "import json,os,runpy,sys\n"
+            "os.environ['CPM_APP_VERSION'] = 'v0.6.5'\n"
+            "sys.frozen = True\n"
+            "sys._camoufox_pm_build_version = '0.6.0'\n"
+            f"value=runpy.run_path({str(ROOT / 'src/camoufox_pm/__init__.py')!r})\n"
+            "print(json.dumps(value['__version__']))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(json.loads(result.stdout), "0.6.5")
+
     def test_missing_distribution_keeps_unknown_source_version(self):
         code = (
             "import json,runpy\n"

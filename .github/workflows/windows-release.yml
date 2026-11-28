@@ -55,6 +55,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/prepare_bundled_runtime.py
 
+      - name: Compute rolling app version
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
+          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Build static WebUI and slim Python sidecar
         run: uv run --no-sync python scripts/build_desktop.py --sidecar-only --skip-runtime
 
@@ -74,12 +80,6 @@ jobs:
           assert payload["chrome_presets"] >= 60, payload
           assert payload["routes"] > 0, payload
           ' "$OUT"
-
-      - name: Compute rolling app version
-        shell: bash
-        run: |
-          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
-          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Package Windows x64 NSIS installer
         run: uv run --no-sync python scripts/build_desktop.py --package-only
@@ -204,16 +204,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/prepare_bundled_runtime.py
 
+      - name: Compute rolling app version
+        run: |
+          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
+          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Build static WebUI and slim Python sidecar
         run: uv run --no-sync python scripts/build_desktop.py --sidecar-only --skip-runtime
 
       - name: Verify macOS sidecar self-check
         run: ./build/prism-backend/prism-backend --self-check
-
-      - name: Compute rolling app version
-        run: |
-          BASE=$(node -p "require('./electron/package.json').version.split('.').slice(0,2).join('.')")
-          echo "PRISM_APP_VERSION=${BASE}.${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Package macOS arm64 DMG
         run: uv run --no-sync python scripts/build_desktop.py --package-only

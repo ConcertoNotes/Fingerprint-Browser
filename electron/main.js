@@ -107,6 +107,7 @@ function handleTrusted(channel, handler) {
 function registerIpcHandlers() {
   handleTrusted("prism:get-engine-info", () => ({
     engine: "chromium",
+    appVersion: app.getVersion(),
     chromiumVersion: process.versions.chrome || "",
     electronVersion: process.versions.electron || "",
     platform: process.platform,
@@ -393,6 +394,7 @@ if (!singleLock) {
       repoRoot: path.resolve(__dirname, ".."),
       safeStorage,
       distribution,
+      appVersion: app.getVersion(),
     });
 
     workspaceManager = new WorkspaceManager({

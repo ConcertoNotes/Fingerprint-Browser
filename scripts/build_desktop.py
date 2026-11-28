@@ -328,8 +328,11 @@ def build_electron_builder_command(
     return cmd
 
 
-def build_sidecar() -> Path:
+def build_sidecar(app_version: str | None = None) -> Path:
     """Freeze the slim Python Core Sidecar into ``build/prism-backend/``."""
+    env = os.environ.copy()
+    if app_version:
+        env["PRISM_APP_VERSION"] = app_version
     subprocess.run(
         [
             sys.executable,
@@ -344,6 +347,7 @@ def build_sidecar() -> Path:
             "--clean",
         ],
         cwd=ROOT,
+        env=env,
         check=True,
     )
     exe_name = "prism-backend.exe" if sys.platform == "win32" else "prism-backend"
@@ -599,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
                 [sys.executable, str(ROOT / "scripts" / "prepare_bundled_runtime.py")],
                 check=True,
             )
-        build_sidecar()
+        build_sidecar(app_version=app_version)
         if args.sidecar_only:
             print(f"Sidecar build complete - see {BACKEND_DIR}")
             return 0

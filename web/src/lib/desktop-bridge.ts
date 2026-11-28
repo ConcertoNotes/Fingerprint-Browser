@@ -2,6 +2,7 @@
 
 export interface DesktopEngineInfo {
   engine: 'chromium'
+  appVersion?: string
   chromiumVersion: string
   electronVersion: string
   platform: string

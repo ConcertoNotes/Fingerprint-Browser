@@ -6,6 +6,7 @@ MIT). Internal identifiers (the ``camoufox_pm`` package, the ``camoufox-pm`` com
 scripts and local data continue working seamlessly.
 """
 
+import os
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
@@ -13,10 +14,15 @@ from importlib.metadata import PackageNotFoundError, version
 # had already drifted: a wheel built as 0.2.0 reported 0.1.1 through /health and
 # in the OpenAPI schema, because releasing means editing pyproject.toml and it is
 # the second copy that gets forgotten.
+_env_version = (os.environ.get("CPM_APP_VERSION") or "").strip().lstrip("v")
 _build_version = (
     getattr(sys, "_camoufox_pm_build_version", None) if getattr(sys, "frozen", False) else None
 )
-if _build_version:
+if _env_version:
+    # Desktop Electron shell passes its packaged app.getVersion() here so the
+    # sidecar, API endpoints, and Settings UI always stay in sync with the app.
+    __version__ = _env_version
+elif _build_version:
     # Desktop runtime hook is compiled into this executable. Old dist-info may
     # remain alongside it after an upgrade and must not determine its version.
     __version__ = _build_version

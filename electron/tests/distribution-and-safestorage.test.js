@@ -271,6 +271,7 @@ test("SidecarManager.buildEnv injects distribution env vars for customer and sta
       resourcesPath: stdResDir,
       userDataDir: path.join(tmpDir, "userData"),
       repoRoot: tmpDir,
+      appVersion: "0.6.5",
     });
     const stdEnv = stdSidecar.buildEnv({
       port: 18766,
@@ -282,6 +283,7 @@ test("SidecarManager.buildEnv injects distribution env vars for customer and sta
     assert.equal("CPM_CLOUD_URL" in stdEnv, false);
     assert.equal(stdEnv.CPM_BRAND_NAME, "棱镜浏览器");
     assert.equal(stdEnv.CPM_REQUIRE_ACTIVATION, "0");
+    assert.equal(stdEnv.CPM_APP_VERSION, "0.6.5");
 
     // 3. Unpackaged dev mode defaults cleanly while allowing local env testing
     const devSidecar = new SidecarManager({
